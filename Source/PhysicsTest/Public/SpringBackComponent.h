@@ -47,6 +47,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Spring")
 	void SnapToTargetPosition();
 
+	// 高度限制参数-----------------------------------------------
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Height Limit")
+	bool bEnableHeightLimit = true; // 是否启用高度限制
+    
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Height Limit")
+	float MinHeightRelative = 0.0f; // 相对于父物体的最小高度（相对空间）
+    
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Height Limit")
+	float HeightLimitStiffness = 1000.0f; // 高度限制的刚度系数
+    
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bShowHeightLimit = true; // 是否显示高度限制调试
+
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
@@ -84,6 +97,14 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "Spring")
 	bool FindAndSetParentComponentByName(FName ComponentName);
 
+	// 应用高度限制-------------------------------------------------
+	void ApplyHeightLimit(float DeltaTime);
+    
+	// 计算球体在父物体相对空间中的高度
+	float GetCurrentRelativeHeight() const;
+    
+	// 限制球体的位置到最小高度以上
+	void ClampToMinHeight();
 
 private:
 	UPrimitiveComponent* TargetComponent; // 受控制的子物体组件（如StaticMesh）
@@ -114,6 +135,10 @@ private:
     
 	// 切换到吸附模式
 	void EnableSnapMode();
+	
+	// 高度限制相关变量---------------------------------------
+	FVector LastValidPosition; // 最后有效位置（不低于最小高度）
+	bool bIsBelowMinHeight = false;
 	
 
 };
