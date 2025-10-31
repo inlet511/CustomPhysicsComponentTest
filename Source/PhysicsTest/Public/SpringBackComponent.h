@@ -35,6 +35,20 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
 							   FActorComponentTickFunction* ThisTickFunction) override;
 
+
+	
+	// 快速吸附速度系数（越大吸附越快）
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring")
+	float SnapSpeed = 10.0f;
+
+	// 吸附距离阈值：距离小于此值时直接吸附
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring")
+	float SnapThreshold = 5.0f;
+
+	// 最大吸附力限制
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring")
+	float MaxForce = 10000.0f;
+
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;

@@ -20,6 +20,12 @@ void USpringBackComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 设置更合适的默认参数
+	SpringStiffness = 500.0f; // 增加刚度
+	SnapSpeed = 15.0f;       // 快速吸附
+	SnapThreshold = 3.0f;     // 更小的吸附阈值
+	MaxForce = 5000.0f;      // 合理的力限制
+	
 	// 查找并设置父组件（如果指定了名称）
 	if (ParentComponentName != NAME_None)
 	{
@@ -56,7 +62,6 @@ bool USpringBackComponent::FindAndSetTargetComponentByName(FName ComponentName)
 	{
 		// 启用物理模拟以确保碰撞检测和力作用
 		TargetComponent->SetSimulatePhysics(true);
-		// 启用碰撞事件触发
 		TargetComponent->SetNotifyRigidBodyCollision(true);
 		TargetComponent->OnComponentHit.AddDynamic(this, &USpringBackComponent::OnComponentHit);
 
@@ -171,27 +176,27 @@ void USpringBackComponent::ApplySpringForce(float DeltaTime)
 	FVector Offset = TargetPosition - CurrentPosition;
 	float Distance = Offset.Size();
 
-	// 限制运动范围：若超出范围，将位置强制拉回边界
-	if (Distance > MovementRange)
+	// 快速吸附模式
+
+	// 如果距离很小，直接吸附到目标位置
+	if (Distance < SnapThreshold)
 	{
-		Offset = Offset.GetSafeNormal() * MovementRange;
-		CurrentPosition = TargetPosition - Offset;
-		TargetComponent->SetWorldLocation(CurrentPosition);
-		// 重置速度以防止惯性溢出
+		TargetComponent->SetWorldLocation(TargetPosition);
 		TargetComponent->SetPhysicsLinearVelocity(FVector::ZeroVector);
 		CurrentVelocity = FVector::ZeroVector;
+		return;
 	}
 
-	// 计算弹簧力 F = k*x - c*v （临界阻尼模型）[3](@ref)
-	FVector SpringForce = SpringStiffness * Offset; // 朝向目标位置的弹性力
-	FVector DampingForce = DampingCoefficient * CurrentVelocity; // 与速度反向的阻尼力
-	FVector TotalForce = SpringForce - DampingForce; // 合力
-
-	// 应用力到物理体
-	TargetComponent->AddForce(TotalForce);
-
-	// 更新速度估计（用于下一帧阻尼计算）
+	// 使用更激进的弹簧算法
+	FVector DesiredVelocity = Offset.GetSafeNormal() * SnapSpeed * Distance;
+	FVector Force = (DesiredVelocity - CurrentVelocity) * SpringStiffness;
+    
+	// 限制最大力
+	Force = Force.GetClampedToMaxSize(MaxForce);
+    
+	TargetComponent->AddForce(Force);
 	CurrentVelocity = TargetComponent->GetPhysicsLinearVelocity();
+	
 }
 
 // Called every frame
