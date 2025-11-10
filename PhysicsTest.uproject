@@ -7,7 +7,10 @@
 		{
 			"Name": "PhysicsTest",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"GeometryFramework"
+			]
 		}
 	],
 	"Plugins": [
@@ -17,6 +20,11 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+		},
+		{
+			"Name": "GeometryScripting",
+			"Enabled": true
 		}
+		
 	]
 }

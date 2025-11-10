@@ -7,6 +7,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "SpringBackComponent.generated.h"
 
 
@@ -59,6 +60,9 @@ public:
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bShowHeightLimit = true; // 是否显示高度限制调试
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics")
+	UPhysicalMaterial* NoBouncePhysicalMaterial;
 
 protected:
 	// Called when the game starts
@@ -127,9 +131,9 @@ private:
 	// 碰撞检测相关变量
 	float LastCollisionTime = -1.0f;	
 	bool CheckForCollisions();
-	bool CheckContactWithSweep();
+	bool CheckContactWithSweep();	
 	bool CheckContactWithMultiSphere();
-    
+	
 	// 切换到物理模拟模式
 	void EnablePhysicsSimulation();
     

@@ -31,10 +31,10 @@ bool USpringBackComponent::CheckForCollisions()
     
 	float CurrentTime = GetWorld()->GetTimeSeconds();
     
-	// 方法1：检查最近是否有碰撞事件
+	// 1：检查最近是否有碰撞事件
 	bool bRecentlyCollided = (CurrentTime - LastCollisionTime) < CollisionCooldownTime;
     
-	// 方法2：使用扫描检测当前是否有接触
+	// 2：使用扫描检测当前是否有接触
 	bool bCurrentlyInContact = CheckContactWithSweep();
     
 	return bRecentlyCollided || bCurrentlyInContact;
@@ -135,6 +135,8 @@ bool USpringBackComponent::CheckContactWithMultiSphere()
 }
 
 
+
+
 void USpringBackComponent::EnablePhysicsSimulation()
 {
 	if (!TargetComponent) return;
@@ -142,6 +144,8 @@ void USpringBackComponent::EnablePhysicsSimulation()
 	if (!TargetComponent->IsSimulatingPhysics())
 	{
 		TargetComponent->SetSimulatePhysics(true);
+		TargetComponent->SetPhysicsLinearVelocity(FVector(0,0,0));
+		
 		UE_LOG(LogTemp, Verbose, TEXT("SpringBackComponent: 切换到物理模拟模式"));
 	}
 }
@@ -190,6 +194,7 @@ void USpringBackComponent::BeginPlay()
 		EnableSnapMode();
 	}
 	
+	
 	if (TargetComponent && ParentComponent)
 	{
 		// 设置最后有效位置
@@ -210,6 +215,8 @@ void USpringBackComponent::OnComponentHit(UPrimitiveComponent* HitComponent, AAc
 	if (OtherActor == GetOwner()) return;    
 
 	LastCollisionTime = GetWorld()->GetTimeSeconds();
+
+	UE_LOG(LogTemp, Warning, TEXT("Hit %f"),LastCollisionTime);
     
 	// 切换到物理模拟模式
 	EnablePhysicsSimulation();
@@ -228,9 +235,18 @@ bool USpringBackComponent::FindAndSetTargetComponentByName(FName ComponentName)
 		TargetComponent->SetSimulatePhysics(true);
 		TargetComponent->SetNotifyRigidBodyCollision(true);
 		TargetComponent->OnComponentHit.AddDynamic(this, &USpringBackComponent::OnComponentHit);
-		// TargetComponent->OnComponentBeginOverlap.AddDynamic(this, &USpringBackComponent::OnComponentBeginOverlap);
-		// TargetComponent->OnComponentEndOverlap.AddDynamic(this, &USpringBackComponent::OnComponentEndOverlap);		
-		// TargetComponent->SetGenerateOverlapEvents(true);
+
+		if (NoBouncePhysicalMaterial)
+		{
+			TargetComponent->SetPhysMaterialOverride(NoBouncePhysicalMaterial);
+		}
+		else
+		{
+			UPhysicalMaterial* TempPhysMat = NewObject<UPhysicalMaterial>(this);
+			TempPhysMat->Restitution = 0.0f;
+			TempPhysMat->Friction = 0.8f;
+			TargetComponent->SetPhysMaterialOverride(TempPhysMat);
+		}
 
 
 		// 记录质量
@@ -379,10 +395,10 @@ void USpringBackComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	if (bShowMovementRange && TargetComponent && ParentComponent)
 	{
 		FVector TargetPos = CalculateTargetPosition();
-		DrawDebugSphere(GetWorld(), TargetPos, MovementRange, 12, FColor::Green, false, -1.0f, 0, 2.0f);
+		//DrawDebugSphere(GetWorld(), TargetPos, MovementRange, 12, FColor::Green, false, -1.0f, 0, 2.0f);
         
 		// 显示接触检测范围
-		DrawDebugSphere(GetWorld(), TargetPos, ContactDetectionRadius, 8, FColor::Yellow, false, -1.0f, 0, 1.0f);
+		//DrawDebugSphere(GetWorld(), TargetPos, ContactDetectionRadius, 8, FColor::Yellow, false, -1.0f, 0, 1.0f);
         
 		FString StatusText = FString::Printf(TEXT("物理模式: %s"), 
 			bShouldUsePhysics ? TEXT("是") : TEXT("否"));
