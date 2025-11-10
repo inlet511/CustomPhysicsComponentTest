@@ -101,6 +101,12 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "Spring")
 	bool FindAndSetParentComponentByName(FName ComponentName);
 
+	UFUNCTION()
+	void ParentBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult);
+
+	UFUNCTION()
+	void ParentEndOverlap(UPrimitiveComponent* OverlappedComponent,AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+	
 	// 应用高度限制-------------------------------------------------
 	void ApplyHeightLimit(float DeltaTime);
     
@@ -112,7 +118,7 @@ protected:
 
 private:
 	UPrimitiveComponent* TargetComponent; // 受控制的子物体组件（如StaticMesh）
-	USceneComponent* ParentComponent;     // 父组件（用于跟随移动）
+	UPrimitiveComponent* ParentComponent;     // 父组件（用于跟随移动）
 	FVector CurrentVelocity;               // 当前速度（用于阻尼计算）
 	float ObjectMass;                      // 子物体质量（用于临界阻尼计算）
 
@@ -126,6 +132,10 @@ private:
 	// 应用弹簧力：基于偏移和速度计算临界阻尼力
 	void ApplySpringForce(float DeltaTime);
 
+	bool bCurrentlyTargetHit = false;
+	bool bCurrentlyParentInContact = false;
+	bool bTargetShouldUsePhysics = false;
+	bool bTargetIsUsingPhysics = false;
 
 	
 	// 碰撞检测相关变量

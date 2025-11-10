@@ -74,5 +74,5 @@ void AInOutTestActor::Tick(float DeltaTime)
 	FVector LocalLoc = MeshTransform.InverseTransformPosition(WorldLoc);
 	
 	bool bInside = Winding->IsInside(LocalLoc);
-	UE_LOG(LogTemp, Warning, TEXT("%s"), bInside?TEXT("true"):TEXT("false"));
+	//UE_LOG(LogTemp, Warning, TEXT("%s"), bInside?TEXT("true"):TEXT("false"));
 }

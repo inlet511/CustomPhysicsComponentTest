@@ -2,6 +2,8 @@
 
 
 #include "PhysicsTest/Public/SpringBackComponent.h"
+
+#include "MovieSceneTracksComponentTypes.h"
 #include "Engine/OverlapResult.h"
 
 
@@ -19,7 +21,6 @@ void USpringBackComponent::SnapToTargetPosition()
 	FVector TargetPos = CalculateTargetPosition();
 	TargetComponent->SetWorldLocation(TargetPos);
 	TargetComponent->SetWorldRotation(ParentComponent ? ParentComponent->GetComponentRotation() : FRotator::ZeroRotator);
-    
 	// 重置速度
 	CurrentVelocity = FVector::ZeroVector;
 }
@@ -27,7 +28,7 @@ void USpringBackComponent::SnapToTargetPosition()
 
 bool USpringBackComponent::CheckForCollisions()
 {
-	if (!TargetComponent || !bEnableCollisionDetection) return false;
+	if (!ParentComponent || !bEnableCollisionDetection) return false;
     
 	float CurrentTime = GetWorld()->GetTimeSeconds();
     
@@ -43,9 +44,9 @@ bool USpringBackComponent::CheckForCollisions()
 
 bool USpringBackComponent::CheckContactWithSweep()
 {
-	if (!TargetComponent || !GetWorld()) return false;
+	if (!ParentComponent || !GetWorld()) return false;
     
-	FVector Start = TargetComponent->GetComponentLocation();
+	FVector Start = ParentComponent->GetComponentLocation();
     
 	// 向多个方向发射短距离扫描检测接触
 	TArray<FVector> Directions = {
@@ -140,10 +141,13 @@ bool USpringBackComponent::CheckContactWithMultiSphere()
 void USpringBackComponent::EnablePhysicsSimulation()
 {
 	if (!TargetComponent) return;
+
+	
     
 	if (!TargetComponent->IsSimulatingPhysics())
 	{
 		TargetComponent->SetSimulatePhysics(true);
+		bTargetShouldUsePhysics = true;
 		TargetComponent->SetPhysicsLinearVelocity(FVector(0,0,0));
 		
 		UE_LOG(LogTemp, Verbose, TEXT("SpringBackComponent: 切换到物理模拟模式"));
@@ -160,6 +164,7 @@ void USpringBackComponent::EnableSnapMode()
 		TargetComponent->SetPhysicsLinearVelocity(FVector::ZeroVector);
 		TargetComponent->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
 		TargetComponent->SetSimulatePhysics(false);
+		bTargetIsUsingPhysics = false;
 	}
     
 	// 立即吸附到目标位置
@@ -217,12 +222,58 @@ void USpringBackComponent::OnComponentHit(UPrimitiveComponent* HitComponent, AAc
 	LastCollisionTime = GetWorld()->GetTimeSeconds();
 
 	UE_LOG(LogTemp, Warning, TEXT("Hit %f"),LastCollisionTime);
-    
+
+	bCurrentlyTargetHit = true;
+	
 	// 切换到物理模拟模式
 	EnablePhysicsSimulation();
     
 	// 碰撞时更新速度估计
 	CurrentVelocity = TargetComponent->GetPhysicsLinearVelocity();
+}
+
+
+void USpringBackComponent::TickComponent(float DeltaTime, ELevelTick TickType,
+										 FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (!TargetComponent) return;
+
+
+	// 1. 状态切换
+	if (!bCurrentlyParentInContact)
+	{
+		if (bCurrentlyTargetHit)
+		{
+			// 切入物理状态
+			EnablePhysicsSimulation();
+			bTargetShouldUsePhysics = true;
+			bCurrentlyParentInContact = true;
+		}
+	}
+
+	if (bTargetShouldUsePhysics)
+	{
+		if (!bCurrentlyParentInContact)
+		{
+			// 切出物理状态
+			bTargetShouldUsePhysics = false;
+			EnableSnapMode();
+		}
+	}
+
+	// 2. 不同状态下应用不同的函数
+	if (bTargetIsUsingPhysics)
+	{        
+		// 应用弹簧力
+		ApplySpringForce(DeltaTime);
+	}
+	else
+	{
+		// 吸附到Parent
+		SnapToTargetPosition();
+	}	
 }
 
 bool USpringBackComponent::FindAndSetTargetComponentByName(FName ComponentName)
@@ -350,69 +401,17 @@ void USpringBackComponent::ApplySpringForce(float DeltaTime)
 	
 }
 
-// Called every frame
-void USpringBackComponent::TickComponent(float DeltaTime, ELevelTick TickType,
-                                         FActorComponentTickFunction* ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!TargetComponent) return;
-
-	bool bShouldUsePhysics = CheckForCollisions();
-	
-	// 状态切换
-	if (CheckForCollisions())
-	{
-		// 确保启用物理模拟
-		if (!TargetComponent->IsSimulatingPhysics())
-		{
-			EnablePhysicsSimulation();
-		}
-        
-		// 应用弹簧力
-		ApplySpringForce(DeltaTime);
-	}
-	else
-	{
-		// 切换到吸附模式
-		if (TargetComponent->IsSimulatingPhysics())
-		{
-			// 添加小延迟避免抖动
-			float CurrentTime = GetWorld()->GetTimeSeconds();
-			if ((CurrentTime - LastCollisionTime) > CollisionCooldownTime)
-			{
-				EnableSnapMode();
-			}
-		}
-		else
-		{
-			// 确保位置正确跟随
-			SnapToTargetPosition();
-		}
-	}
-
-	// 调试绘制
-	if (bShowMovementRange && TargetComponent && ParentComponent)
-	{
-		FVector TargetPos = CalculateTargetPosition();
-		//DrawDebugSphere(GetWorld(), TargetPos, MovementRange, 12, FColor::Green, false, -1.0f, 0, 2.0f);
-        
-		// 显示接触检测范围
-		//DrawDebugSphere(GetWorld(), TargetPos, ContactDetectionRadius, 8, FColor::Yellow, false, -1.0f, 0, 1.0f);
-        
-		FString StatusText = FString::Printf(TEXT("物理模式: %s"), 
-			bShouldUsePhysics ? TEXT("是") : TEXT("否"));
-		DrawDebugString(GetWorld(), TargetPos + FVector(0,0,60), StatusText, nullptr, 
-					   bShouldUsePhysics ? FColor::Red : FColor::Green, 0, true);
-	}
-}
 
 bool USpringBackComponent::FindAndSetParentComponentByName(FName ComponentName)
 {
-	ParentComponent = FindSceneComponentByName(ComponentName);
+	ParentComponent = FindPrimitiveComponentByName(ComponentName);
     
 	if (ParentComponent)
-	{        
+	{
+		ParentComponent->SetGenerateOverlapEvents(true);
+		ParentComponent->OnComponentBeginOverlap.AddDynamic(this,&USpringBackComponent::ParentBeginOverlap);
+		ParentComponent->OnComponentEndOverlap.AddDynamic(this,  &USpringBackComponent::ParentEndOverlap);
 		UE_LOG(LogTemp, Log, TEXT("SpringBackComponent: 成功找到并设置父组件 %s"), *ComponentName.ToString());
 		return true;
 	}
@@ -421,6 +420,25 @@ bool USpringBackComponent::FindAndSetParentComponentByName(FName ComponentName)
 		UE_LOG(LogTemp, Warning, TEXT("SpringBackComponent: 未找到名为 %s 的SceneComponent"), *ComponentName.ToString());
 		return false;
 	}
+}
+
+void USpringBackComponent::ParentBeginOverlap(UPrimitiveComponent* OverlappedComponent,AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+	bool bFromSweep, const FHitResult& SweepResult)
+{
+	// 忽略掉TargetComponent
+	if(OverlappedComponent == TargetComponent)
+		return;
+	UE_LOG(LogTemp, Warning, TEXT("Begin Overlap"));
+	bCurrentlyParentInContact = true;
+}
+
+void USpringBackComponent::ParentEndOverlap(UPrimitiveComponent* OverlappedComponent,AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+	// 忽略掉TargetComponent
+	if(OverlappedComponent == TargetComponent)
+		return;
+	UE_LOG(LogTemp, Warning, TEXT("End Overlap"));
+	bCurrentlyParentInContact = false;
 }
 
 void USpringBackComponent::ApplyHeightLimit(float DeltaTime)
