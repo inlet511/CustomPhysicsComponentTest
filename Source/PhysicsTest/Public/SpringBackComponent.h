@@ -10,6 +10,10 @@
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "SpringBackComponent.generated.h"
 
+/**
+ *	ParentComponent指的是笔尖
+ *	TargetComponent指的是跟随笔尖运动的组件，会受到碰撞阻挡
+ */
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PHYSICSTEST_API USpringBackComponent : public UActorComponent
@@ -20,7 +24,7 @@ public:
 	// Sets default values for this component's properties
 	USpringBackComponent();	
 
-	// 父组件名称（用于跟随移动）
+	// 父组件名称
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring", meta = (DisplayName = "父组件名称"))
 	FName ParentComponentName = NAME_None;
 
@@ -31,22 +35,22 @@ public:
 	// 相对偏移（相对于父组件的位置）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring")
 	FVector RelativeOffset = FVector::ZeroVector;
-
-	// Called every frame
+	
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
 							   FActorComponentTickFunction* ThisTickFunction) override;	
-
-	// 碰撞检测相关------------------------
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
 	bool bEnableCollisionDetection = true;
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
 	float CollisionCooldownTime = 0.5f; // 碰撞后保持物理模拟的时间    
-
-    
-	// 立即吸附到目标位置（蓝图可调用）
+	
+	/** 移动到父级位置
+	 *  bUseSweep: 移动过程中是否进行扫描
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Spring")
-	void SnapToTargetPosition();
+	void MoveTargetToParent(bool bUseSweep);
+	
 
 	// 高度限制参数-----------------------------------------------
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Height Limit")
@@ -67,15 +71,6 @@ public:
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
-
-
-	UFUNCTION()
-	void OnComponentHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
-	
-
-	// 接触检测参数
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision", meta = (AllowPrivateAccess = "true"))
-	float ContactDetectionRadius = 20.0f;
 	
 	// 弹簧弹性系数（刚度），控制回弹力度
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring")
@@ -89,15 +84,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spring")
 	float MovementRange = 200.0f;
 
-	// 是否显示调试运动范围
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
-	bool bShowMovementRange = true;
-
-	// 手动查找并设置目标组件（蓝图可调用）
+	// 查找并设置目标组件
 	UFUNCTION(BlueprintCallable, Category = "Spring")
 	bool FindAndSetTargetComponentByName(FName ComponentName);
 	
-	// 手动查找并设置父组件（蓝图可调用）
+	// 查找并设置父组件
 	UFUNCTION(BlueprintCallable, Category = "Spring")
 	bool FindAndSetParentComponentByName(FName ComponentName);
 
@@ -121,39 +112,26 @@ private:
 	UPrimitiveComponent* ParentComponent;     // 父组件（用于跟随移动）
 	FVector CurrentVelocity;               // 当前速度（用于阻尼计算）
 	float ObjectMass;                      // 子物体质量（用于临界阻尼计算）
-
-	USceneComponent* FindSceneComponentByName(FName NameToFind);
+	
 	UPrimitiveComponent* FindPrimitiveComponentByName(FName NameToFind);
 
-
-	// 计算当前的目标位置（基于父组件位置和相对偏移）
-	FVector CalculateTargetPosition() const;	
+	// 计算当前的目标位置
+	FVector CalculateMoveTargetPosition() const;	
 	
 	// 应用弹簧力：基于偏移和速度计算临界阻尼力
 	void ApplySpringForce(float DeltaTime);
 
-	bool bCurrentlyTargetHit = false;
+	// 当前父级物体和切削对象是否有接触
 	bool bCurrentlyParentInContact = false;
-	bool bTargetShouldUsePhysics = false;
-	bool bTargetIsUsingPhysics = false;
 
-	
-	// 碰撞检测相关变量
-	float LastCollisionTime = -1.0f;	
-	bool CheckForCollisions();
-	bool CheckContactWithSweep();	
-	bool CheckContactWithMultiSphere();
+	// 当前目标物体是否启用了物理模拟
+	bool bTargetIsUsingPhysics = false;
 	
 	// 切换到物理模拟模式
-	void EnablePhysicsSimulation();
+	void SwitchToPhysicsSimulation();
     
 	// 切换到吸附模式
-	void EnableSnapMode();
-	
-	// 高度限制相关变量---------------------------------------
-	FVector LastValidPosition; // 最后有效位置（不低于最小高度）
-	bool bIsBelowMinHeight = false;
-	
+	void SwitchToSnapMode();	
 
 };
 

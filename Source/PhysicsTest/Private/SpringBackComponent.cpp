@@ -14,162 +14,55 @@ USpringBackComponent::USpringBackComponent()
 }
 
 
-void USpringBackComponent::SnapToTargetPosition()
+void USpringBackComponent::MoveTargetToParent(bool bUseSweep)
 {
 	if (!TargetComponent) return;
     
-	FVector TargetPos = CalculateTargetPosition();
-	TargetComponent->SetWorldLocation(TargetPos);
+	FVector TargetPos = CalculateMoveTargetPosition();
+	FHitResult HitResult;
+	TargetComponent->SetWorldLocation(TargetPos,bUseSweep,&HitResult);
+	if (bUseSweep && HitResult.bBlockingHit)
+	{
+		if (!bTargetIsUsingPhysics)
+		{			
+			SwitchToPhysicsSimulation();
+		}
+	}
 	TargetComponent->SetWorldRotation(ParentComponent ? ParentComponent->GetComponentRotation() : FRotator::ZeroRotator);
 	// 重置速度
 	CurrentVelocity = FVector::ZeroVector;
 }
 
 
-bool USpringBackComponent::CheckForCollisions()
-{
-	if (!ParentComponent || !bEnableCollisionDetection) return false;
-    
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-    
-	// 1：检查最近是否有碰撞事件
-	bool bRecentlyCollided = (CurrentTime - LastCollisionTime) < CollisionCooldownTime;
-    
-	// 2：使用扫描检测当前是否有接触
-	bool bCurrentlyInContact = CheckContactWithSweep();
-    
-	return bRecentlyCollided || bCurrentlyInContact;
-
-}
-
-bool USpringBackComponent::CheckContactWithSweep()
-{
-	if (!ParentComponent || !GetWorld()) return false;
-    
-	FVector Start = ParentComponent->GetComponentLocation();
-    
-	// 向多个方向发射短距离扫描检测接触
-	TArray<FVector> Directions = {
-		FVector(1, 0, 0), FVector(-1, 0, 0),
-		FVector(0, 1, 0), FVector(0, -1, 0), 
-		FVector(0, 0, 1), FVector(0, 0, -1)
-	};
-    
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(GetOwner());
-    
-	float SweepDistance = ContactDetectionRadius;
-    
-	for (const FVector& Dir : Directions)
-	{
-		FVector End = Start + Dir * SweepDistance;
-		FHitResult HitResult;
-        
-		bool bHit = GetWorld()->SweepSingleByChannel(
-			HitResult,
-			Start,
-			End,
-			FQuat::Identity,
-			TargetComponent->GetCollisionObjectType(),
-			FCollisionShape::MakeSphere(SweepDistance * 0.5f), // 使用小球体形状
-			QueryParams
-		);
-        
-		if (bHit && HitResult.GetComponent() && 
-			HitResult.GetComponent()->GetOwner() != GetOwner())
-		{
-			return true;
-		}
-	}
-    
-	return false;
-}
-
-bool USpringBackComponent::CheckContactWithMultiSphere()
-{
-	if (!TargetComponent || !GetWorld()) return false;
-    
-	FVector Center = TargetComponent->GetComponentLocation();
-	float Radius = ContactDetectionRadius;
-    
-	// 在多个位置检测重叠
-	TArray<FVector> TestLocations = {
-		Center,
-		Center + FVector(Radius * 0.5f, 0, 0),
-		Center + FVector(-Radius * 0.5f, 0, 0),
-		Center + FVector(0, Radius * 0.5f, 0),
-		Center + FVector(0, -Radius * 0.5f, 0),
-		Center + FVector(0, 0, Radius * 0.5f),
-		Center + FVector(0, 0, -Radius * 0.5f)
-	};
-    
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(GetOwner());
-    
-	for (const FVector& TestLocation : TestLocations)
-	{
-		TArray<FOverlapResult> OverlapResults;
-		bool bHasOverlap = GetWorld()->OverlapMultiByChannel(
-			OverlapResults,
-			TestLocation,
-			FQuat::Identity,
-			TargetComponent->GetCollisionObjectType(),
-			FCollisionShape::MakeSphere(Radius * 0.3f),
-			QueryParams
-		);
-        
-		if (bHasOverlap)
-		{
-			for (const FOverlapResult& Result : OverlapResults)
-			{
-				if (Result.GetComponent() && 
-					Result.GetComponent() != TargetComponent &&
-					Result.GetComponent()->GetOwner() != GetOwner())
-				{
-					return true;
-				}
-			}
-		}
-	}
-    
-	return false;
-}
-
-
-
-
-void USpringBackComponent::EnablePhysicsSimulation()
+void USpringBackComponent::SwitchToPhysicsSimulation()
 {
 	if (!TargetComponent) return;
 
-	
-    
-	if (!TargetComponent->IsSimulatingPhysics())
+	if (!bTargetIsUsingPhysics)
 	{
 		TargetComponent->SetSimulatePhysics(true);
-		bTargetShouldUsePhysics = true;
-		TargetComponent->SetPhysicsLinearVelocity(FVector(0,0,0));
-		
-		UE_LOG(LogTemp, Verbose, TEXT("SpringBackComponent: 切换到物理模拟模式"));
+		bTargetIsUsingPhysics = true;
+		TargetComponent->SetPhysicsLinearVelocity(FVector(0,0,0));		
+		UE_LOG(LogTemp, Warning, TEXT("SpringBackComponent: 切换到物理模拟模式"));
 	}
 }
 
-void USpringBackComponent::EnableSnapMode()
+void USpringBackComponent::SwitchToSnapMode()
 {
 	if (!TargetComponent) return;
     
-	if (TargetComponent->IsSimulatingPhysics())
+	if (bTargetIsUsingPhysics)
 	{
 		// 先停止物理模拟
 		TargetComponent->SetPhysicsLinearVelocity(FVector::ZeroVector);
 		TargetComponent->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
 		TargetComponent->SetSimulatePhysics(false);
-		bTargetIsUsingPhysics = false;
+		bTargetIsUsingPhysics = false;		
+		UE_LOG(LogTemp, Verbose, TEXT("SpringBackComponent: 切换到吸附模式"));
+
+		// 立即吸附到目标位置
+		MoveTargetToParent(false);
 	}
-    
-	// 立即吸附到目标位置
-	SnapToTargetPosition();
-	UE_LOG(LogTemp, Verbose, TEXT("SpringBackComponent: 切换到吸附模式"));
 }
 
 // Called when the game starts
@@ -196,40 +89,8 @@ void USpringBackComponent::BeginPlay()
 	// 初始状态：吸附模式
 	if (TargetComponent)
 	{
-		EnableSnapMode();
-	}
-	
-	
-	if (TargetComponent && ParentComponent)
-	{
-		// 设置最后有效位置
-		LastValidPosition = TargetComponent->GetComponentLocation();
-        
-		// 确保初始位置不低于最小高度
-		ClampToMinHeight();
-	}
-	
-}
-
-void USpringBackComponent::OnComponentHit(UPrimitiveComponent* HitComponent, AActor* OtherActor,
-	UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
-{
-	if (!bEnableCollisionDetection || !TargetComponent) return;
-    
-	// 忽略与自己的碰撞
-	if (OtherActor == GetOwner()) return;    
-
-	LastCollisionTime = GetWorld()->GetTimeSeconds();
-
-	UE_LOG(LogTemp, Warning, TEXT("Hit %f"),LastCollisionTime);
-
-	bCurrentlyTargetHit = true;
-	
-	// 切换到物理模拟模式
-	EnablePhysicsSimulation();
-    
-	// 碰撞时更新速度估计
-	CurrentVelocity = TargetComponent->GetPhysicsLinearVelocity();
+		SwitchToSnapMode();
+	}	
 }
 
 
@@ -240,39 +101,24 @@ void USpringBackComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 	if (!TargetComponent) return;
 
-
 	// 1. 状态切换
-	if (!bCurrentlyParentInContact)
+	// 当前在物理模拟，父级已经出来了
+	if (bTargetIsUsingPhysics && !bCurrentlyParentInContact)
 	{
-		if (bCurrentlyTargetHit)
-		{
-			// 切入物理状态
-			EnablePhysicsSimulation();
-			bTargetShouldUsePhysics = true;
-			bCurrentlyParentInContact = true;
-		}
-	}
-
-	if (bTargetShouldUsePhysics)
-	{
-		if (!bCurrentlyParentInContact)
-		{
-			// 切出物理状态
-			bTargetShouldUsePhysics = false;
-			EnableSnapMode();
-		}
+		// 切出物理状态
+		SwitchToSnapMode();
 	}
 
 	// 2. 不同状态下应用不同的函数
 	if (bTargetIsUsingPhysics)
-	{        
+	{
 		// 应用弹簧力
 		ApplySpringForce(DeltaTime);
 	}
 	else
 	{
-		// 吸附到Parent
-		SnapToTargetPosition();
+		// 移动到父级位置
+		MoveTargetToParent(true);
 	}	
 }
 
@@ -285,7 +131,7 @@ bool USpringBackComponent::FindAndSetTargetComponentByName(FName ComponentName)
 		// 启用物理模拟以确保碰撞检测和力作用
 		TargetComponent->SetSimulatePhysics(true);
 		TargetComponent->SetNotifyRigidBodyCollision(true);
-		TargetComponent->OnComponentHit.AddDynamic(this, &USpringBackComponent::OnComponentHit);
+		//TargetComponent->OnComponentHit.AddDynamic(this, &USpringBackComponent::OnComponentHit);
 
 		if (NoBouncePhysicalMaterial)
 		{
@@ -320,60 +166,14 @@ bool USpringBackComponent::FindAndSetTargetComponentByName(FName ComponentName)
 }
 
 
-USceneComponent* USpringBackComponent::FindSceneComponentByName(FName NameToFind)
-{
-	AActor* Owner = GetOwner();
-	if (!Owner) return nullptr;
-
-	TArray<UActorComponent*> AllComponents;
-	Owner->GetComponents(AllComponents);
-
-	for (UActorComponent* Component : AllComponents)
-	{
-		if (Component && Component->GetFName() == NameToFind)
-		{
-			return Cast<USceneComponent>(Component);
-		}
-	}
-
-	// 递归查找子组件
-	USceneComponent* RootComp = Owner->GetRootComponent();
-	if (RootComp)
-	{
-		TArray<USceneComponent*> ChildrenComponents;
-		RootComp->GetChildrenComponents(true, ChildrenComponents);
-
-		for (USceneComponent* ChildComp : ChildrenComponents)
-		{
-			if (ChildComp && ChildComp->GetFName() == NameToFind)
-			{
-				return ChildComp;
-			}
-		}
-	}
-
-	return nullptr;
-}
-
 void USpringBackComponent::ApplySpringForce(float DeltaTime)
 {
 	if (!TargetComponent || !TargetComponent->IsSimulatingPhysics()) return;
 
 	FVector CurrentPosition = TargetComponent->GetComponentLocation();
-	FVector TargetPosition = CalculateTargetPosition();
+	FVector TargetPosition = CalculateMoveTargetPosition();
 	FVector Offset = TargetPosition - CurrentPosition;
 	float Distance = Offset.Size();
-
-	// 先应用高度限制
-	ApplyHeightLimit(DeltaTime);
-
-	// 如果低于最小高度，优先处理高度限制
-	if (bIsBelowMinHeight && bEnableHeightLimit)
-	{
-		// 在高度限制期间，减弱水平方向的弹簧力
-		Offset.Z = 0.0f; // 只处理水平方向
-		Distance = Offset.Size();
-	}
 	
 	// 限制运动范围
 	if (Distance > MovementRange)
@@ -384,8 +184,7 @@ void USpringBackComponent::ApplySpringForce(float DeltaTime)
 		TargetComponent->SetPhysicsLinearVelocity(FVector::ZeroVector);
 		CurrentVelocity = FVector::ZeroVector;
 	}
-
-	// 使用更强的弹簧力确保快速回归
+	
 	FVector SpringForce = SpringStiffness * Offset;
 	FVector DampingForce = DampingCoefficient * CurrentVelocity;
 	FVector TotalForce = SpringForce - DampingForce;
@@ -441,88 +240,6 @@ void USpringBackComponent::ParentEndOverlap(UPrimitiveComponent* OverlappedCompo
 	bCurrentlyParentInContact = false;
 }
 
-void USpringBackComponent::ApplyHeightLimit(float DeltaTime)
-{
-	if (!TargetComponent || !ParentComponent || !bEnableHeightLimit || !TargetComponent->IsSimulatingPhysics()) 
-		return;
-    
-	float CurrentHeight = GetCurrentRelativeHeight();
-    
-	if (CurrentHeight < MinHeightRelative)
-	{
-		// 计算需要施加的力来推高球体
-		float HeightDeficit = MinHeightRelative - CurrentHeight;
-        
-		// 将高度差转换为世界空间的偏移
-		FVector WorldUp = ParentComponent->GetUpVector(); // 父组件的上方向
-		FVector ForceDirection = WorldUp;
-        
-		// 计算力的大小（基于高度差和刚度）
-		float ForceMagnitude = HeightLimitStiffness * HeightDeficit;
-        
-		// 应用力
-		FVector CorrectiveForce = ForceDirection * ForceMagnitude;
-		TargetComponent->AddForce(CorrectiveForce);
-        
-		bIsBelowMinHeight = true;
-        
-		// 调试输出
-		if (bShowHeightLimit)
-		{
-			UE_LOG(LogTemp, Verbose, TEXT("Applying height limit force: %.2f, Deficit: %.2f"), ForceMagnitude, HeightDeficit);
-		}
-	}
-	else
-	{
-		bIsBelowMinHeight = false;
-	}
-}
-
-float USpringBackComponent::GetCurrentRelativeHeight() const
-{
-	if (!TargetComponent || !ParentComponent) 
-		return 0.0f;
-    
-	// 将球体的世界坐标转换到父组件的局部空间
-	FVector TargetWorldPos = TargetComponent->GetComponentLocation();
-	FVector LocalPos = ParentComponent->GetComponentTransform().InverseTransformPosition(TargetWorldPos);
-    
-	// 返回局部空间的Z坐标（高度）
-	return LocalPos.Z;
-}
-
-void USpringBackComponent::ClampToMinHeight()
-{
-	if (!TargetComponent || !ParentComponent || !bEnableHeightLimit) 
-		return;
-    
-	float CurrentHeight = GetCurrentRelativeHeight();
-    
-	if (CurrentHeight < MinHeightRelative)
-	{
-		// 计算应该达到的最小高度位置（世界坐标）
-		FVector DesiredLocalPos = ParentComponent->GetComponentTransform().InverseTransformPosition(TargetComponent->GetComponentLocation());
-		DesiredLocalPos.Z = MinHeightRelative;
-		FVector DesiredWorldPos = ParentComponent->GetComponentTransform().TransformPosition(DesiredLocalPos);
-        
-		// 设置位置
-		TargetComponent->SetWorldLocation(DesiredWorldPos);
-        
-		// 重置Z轴速度
-		FVector Velocity = TargetComponent->GetPhysicsLinearVelocity();
-		Velocity.Z = 0.0f;
-		TargetComponent->SetPhysicsLinearVelocity(Velocity);
-        
-		bIsBelowMinHeight = true;
-		LastValidPosition = DesiredWorldPos;
-	}
-	else
-	{
-		bIsBelowMinHeight = false;
-		LastValidPosition = TargetComponent->GetComponentLocation();
-	}
-}
-
 
 UPrimitiveComponent* USpringBackComponent::FindPrimitiveComponentByName(FName NameToFind)
 {
@@ -559,7 +276,7 @@ UPrimitiveComponent* USpringBackComponent::FindPrimitiveComponentByName(FName Na
 	return nullptr;
 }
 
-FVector USpringBackComponent::CalculateTargetPosition() const
+FVector USpringBackComponent::CalculateMoveTargetPosition() const
 {
 	if (ParentComponent)
 	{
