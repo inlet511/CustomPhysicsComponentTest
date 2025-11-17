@@ -35,7 +35,7 @@ namespace UE
 			virtual ~FVoxelCutMeshOp() {}
 
 			// 输入：目标网格和刀具网格
-			TSharedPtr<const FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
+			TSharedPtr<FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
 			TSharedPtr<const FDynamicMesh3, ESPMode::ThreadSafe> CutToolMesh;
     
 			// 变换矩阵

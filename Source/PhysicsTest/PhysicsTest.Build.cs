@@ -9,9 +9,9 @@ public class PhysicsTest : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
-            "GeometryFramework"});
+            "GeometryFramework","GeometryCore"});
 
-        PrivateDependencyModuleNames.AddRange(new string[] { "PhysicsCore","GeometryScriptingCore", "GeometryCore","ModelingOperators" });
+        PrivateDependencyModuleNames.AddRange(new string[] { "PhysicsCore","GeometryScriptingCore", "ModelingOperators" });
 
         // Uncomment if you are using Slate UI
         // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

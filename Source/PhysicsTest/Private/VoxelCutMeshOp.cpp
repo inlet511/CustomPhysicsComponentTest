@@ -294,10 +294,8 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
                 FVector3d VoxelPos = TargetVoxels.GetVoxelWorldPosition(X, Y, Z);
                 
                 // 计算到刀具的距离
-                // double ToolDistance = ToolSpatial.GetDistance(VoxelPos);
                 double ToolDistance = GetDistanceToMesh(ToolSpatial, VoxelPos);
                 
-                // 如果刀具内部，标记为外部
                 if (ToolDistance < 0)
                 {
                     int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);
