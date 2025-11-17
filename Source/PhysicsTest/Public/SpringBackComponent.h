@@ -103,9 +103,7 @@ protected:
     
 	// 计算球体在父物体相对空间中的高度
 	float GetCurrentRelativeHeight() const;
-    
-	// 限制球体的位置到最小高度以上
-	void ClampToMinHeight();
+
 
 private:
 	UPrimitiveComponent* TargetComponent; // 受控制的子物体组件（如StaticMesh）

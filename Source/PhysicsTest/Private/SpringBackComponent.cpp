@@ -195,8 +195,7 @@ void USpringBackComponent::ApplySpringForce(float DeltaTime)
 	TargetComponent->AddForce(TotalForce);
 	CurrentVelocity = TargetComponent->GetPhysicsLinearVelocity();
 
-	// 最后确保位置不低于最小高度
-	ClampToMinHeight();
+
 	
 }
 

@@ -10,8 +10,8 @@
 
 using namespace UE::Geometry;
 
-// FVoxelData 方法实现
-void FVoxelData::Serialize(FArchive& Ar)
+// FMaVoxelData 方法实现
+void FMaVoxelData::Serialize(FArchive& Ar)
 {
     Ar << Voxels;
     Ar << GridOrigin;
@@ -20,7 +20,7 @@ void FVoxelData::Serialize(FArchive& Ar)
     SerializeAxisAlignedBox3d(Ar, WorldBounds);
 }
 
-void FVoxelData::Reset()
+void FMaVoxelData::Reset()
 {
     Voxels.Reset();
     GridSize = 0;
@@ -28,17 +28,17 @@ void FVoxelData::Reset()
     WorldBounds = FAxisAlignedBox3d::Empty();
 }
 
-int32 FVoxelData::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
+int32 FMaVoxelData::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
 {
     return Z * GridSize * GridSize + Y * GridSize + X;
 }
 
-FVector3d FVoxelData::GetVoxelWorldPosition(int32 X, int32 Y, int32 Z) const
+FVector3d FMaVoxelData::GetVoxelWorldPosition(int32 X, int32 Y, int32 Z) const
 {
     return GridOrigin + FVector3d(X, Y, Z) * VoxelSize;
 }
 
-FIntVector FVoxelData::WorldToVoxel(const FVector3d& WorldPos) const
+FIntVector FMaVoxelData::WorldToVoxel(const FVector3d& WorldPos) const
 {
     FVector3d LocalPos = WorldPos - GridOrigin;
     return FIntVector(
@@ -48,7 +48,7 @@ FIntVector FVoxelData::WorldToVoxel(const FVector3d& WorldPos) const
     );
 }
 
-// FVoxelCutMeshOp 方法实现
+
 void FVoxelCutMeshOp::SetTransform(const FTransformSRT3d& Transform)
 {
     ResultTransform = Transform;
@@ -86,15 +86,7 @@ void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
     }
 
     // 生成最终网格
-    // FDynamicMesh3 Result =
     ConvertVoxelsToMesh(*PersistentVoxelData, Progress);
-    
-    // if (Progress && Progress->Cancelled())
-    // {
-    //     return;
-    // }
-    //
-    // ResultMesh->Copy(Result);
 }
 
 bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
@@ -107,7 +99,7 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     // 创建新的体素数据容器
     if (!PersistentVoxelData.IsValid())
     {
-        PersistentVoxelData = MakeShared<FVoxelData>();
+        PersistentVoxelData = MakeShared<FMaVoxelData>();
     }
 
     // 变换目标网格到世界空间
@@ -139,7 +131,7 @@ bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)
     else
     {
         // 全局更新：体素化刀具并执行布尔运算
-        FVoxelData ToolVoxelData;
+        FMaVoxelData ToolVoxelData;
         if (VoxelizeMesh(*CutToolMesh, CutToolTransform, ToolVoxelData, Progress))
         {
             PerformBooleanCut(*PersistentVoxelData, ToolVoxelData, Progress);
@@ -149,10 +141,13 @@ bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)
     return !(Progress && Progress->Cancelled());
 }
 
-double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, const FVector3d& Point)
+double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, const FVector3d& LocalPoint)
 {
     double NearestDistSqr;
-    int NearestTriID = Spatial.FindNearestTriangle(Point, NearestDistSqr);
+
+    
+    
+    int NearestTriID = Spatial.FindNearestTriangle(LocalPoint, NearestDistSqr);
     
     if (NearestTriID != IndexConstants::InvalidID)
     {
@@ -164,7 +159,7 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, const FVector3d& 
 
 
 bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& Transform, 
-                                 FVoxelData& VoxelData, FProgressCancel* Progress)
+                                 FMaVoxelData& VoxelData, FProgressCancel* Progress)
 {
     if (Mesh.TriangleCount() == 0)
     {
@@ -192,6 +187,7 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
     FDynamicMesh3 TransformedMesh = Mesh;
     MeshTransforms::ApplyTransform(TransformedMesh, Transform, true);
     FDynamicMeshAABBTree3 Spatial(&TransformedMesh);
+    TFastWindingTree<FDynamicMesh3> Winding(&Spatial);
     
     // 并行填充体素网格（提高性能）
     ParallelFor(VoxelData.GridSize, [&](int32 Z)
@@ -206,10 +202,12 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
             for (int32 X = 0; X < VoxelData.GridSize; X++)
             {
                 FVector3d VoxelPos = VoxelData.GetVoxelWorldPosition(X, Y, Z);
-                double Distance = GetDistanceToMesh(Spatial,VoxelPos);
+                FVector3d LocalVoxelPos = Transform.InverseTransformPosition(VoxelPos);
+                double Distance = GetDistanceToMesh(Spatial,LocalVoxelPos);
+                bool bInside = Winding.IsInside(VoxelPos);
                 
                 int32 Index = VoxelData.GetVoxelIndex(X, Y, Z);
-                VoxelData.Voxels[Index] = (float)Distance;
+                VoxelData.Voxels[Index] = bInside ? -(float)Distance : (float)Distance;
             }
         }
     });
@@ -217,7 +215,7 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
     return true;
 }
 
-void FVoxelCutMeshOp::PerformBooleanCut(FVoxelData& TargetVoxels, const FVoxelData& ToolVoxels, 
+void FVoxelCutMeshOp::PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVoxelData& ToolVoxels, 
                                        FProgressCancel* Progress)
 {
     // 确保两个体素网格参数匹配
@@ -239,9 +237,8 @@ void FVoxelCutMeshOp::PerformBooleanCut(FVoxelData& TargetVoxels, const FVoxelDa
         {
             for (int32 X = 0; X < TargetVoxels.GridSize; X++)
             {
-                int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);
+                int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);                
                 
-                // 如果刀具体素表示内部（负距离），则将目标体素设为外部
                 if (ToolVoxels.Voxels[Index] < 0)
                 {
                     TargetVoxels.Voxels[Index] = FMath::Abs(TargetVoxels.Voxels[Index]);
@@ -251,7 +248,7 @@ void FVoxelCutMeshOp::PerformBooleanCut(FVoxelData& TargetVoxels, const FVoxelDa
     });
 }
 
-void FVoxelCutMeshOp::UpdateLocalRegion(FVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
+void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)
 {
     // 变换刀具网格到世界空间
@@ -311,7 +308,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FVoxelData& TargetVoxels, const FDynamic
     });
 }
 
-void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FVoxelData& Voxels, FProgressCancel* Progress)
+void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress)
 {
     FMarchingCubes MarchingCubes;
     MarchingCubes.CubeSize = Voxels.VoxelSize;

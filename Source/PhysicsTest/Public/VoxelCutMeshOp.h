@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "ModelingOperators.h"
 #include "BaseOps/VoxelBaseOp.h"
+#include "MaVoxelData.h"
 
 namespace UE
 {
@@ -25,35 +26,8 @@ namespace UE
 			}
     
 			return Ar;
-		}
+		}		
 		
-		// 体素数据容器，支持持久化存储和增量更新
-		struct MODELINGOPERATORS_API FVoxelData
-		{
-			TArray<float> Voxels;           // 体素值（有符号距离场）
-			FVector3d GridOrigin;           // 网格原点
-			int32 GridSize;                 // 每个维度的体素数量
-			double VoxelSize;               // 体素大小
-			FAxisAlignedBox3d WorldBounds;  // 世界空间边界框
-    
-			// 序列化支持
-			void Serialize(FArchive& Ar);
-    
-			// 清空数据
-			void Reset();
-    
-			// 检查是否有效
-			bool IsValid() const { return Voxels.Num() > 0; }
-    
-			// 获取体素索引
-			int32 GetVoxelIndex(int32 X, int32 Y, int32 Z) const;
-    
-			// 获取体素世界位置
-			FVector3d GetVoxelWorldPosition(int32 X, int32 Y, int32 Z) const;
-    
-			// 世界位置到体素坐标
-			FIntVector WorldToVoxel(const FVector3d& WorldPos) const;
-		};
 		
 		class PHYSICSTEST_API FVoxelCutMeshOp  : public FVoxelBaseOp
 		{
@@ -69,7 +43,7 @@ namespace UE
 			FTransform CutToolTransform;
     
 			// 持久化体素数据（输入/输出）
-			TSharedPtr<FVoxelData> PersistentVoxelData;
+			TSharedPtr<FMaVoxelData> PersistentVoxelData;
     
 			// 切削参数
 			double CutOffset = 0.0;
@@ -96,18 +70,18 @@ namespace UE
 		protected:
 			// 体素化方法
 			bool VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& Transform, 
-							 FVoxelData& VoxelData, FProgressCancel* Progress);
+							 FMaVoxelData& VoxelData, FProgressCancel* Progress);
     
 			// 布尔运算
-			void PerformBooleanCut(FVoxelData& TargetVoxels, const FVoxelData& ToolVoxels, 
+			void PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVoxelData& ToolVoxels, 
 								  FProgressCancel* Progress);
     
 			// 局部更新：只更新受刀具影响的区域
-			void UpdateLocalRegion(FVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
+			void UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
 								  const FTransform& ToolTransform, FProgressCancel* Progress);
     
 			// 网格生成
-			void ConvertVoxelsToMesh(const FVoxelData& Voxels, FProgressCancel* Progress);
+			void ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress);
     
 		private:
 			// 内部状态
