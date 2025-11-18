@@ -7,18 +7,18 @@
 #include "DynamicMesh/DynamicMesh3.h"
 #include "Components/DynamicMeshComponent.h"
 #include "GameFramework/Actor.h"
-#include "CuttableObject.generated.h"
+#include "VoxelDynamicMeshActor.generated.h"
 
 using namespace UE::Geometry;
 
 UCLASS()
-class PHYSICSTEST_API ACuttableObject : public ADynamicMeshActor
+class PHYSICSTEST_API AVoxelDynamicMeshActor : public ADynamicMeshActor
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this actor's properties
-	ACuttableObject();
+	AVoxelDynamicMeshActor();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	UStaticMesh* SourceMesh;
@@ -28,6 +28,10 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 public:
 	// Called every frame

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "VoxelCutComponent.h"
+#include "DynamicMeshActor.h"
 #include "VoxelCuttingActor.generated.h"
 
 UCLASS()
@@ -20,12 +21,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel Cut")
 	UVoxelCutComponent* VoxelCutComponent;
 
-	// 设置目标Actor
-	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	void SetTargetActor(ADynamicMeshActor* InTargetActor);
+	UPROPERTY(EditAnywhere,BlueprintReadWrite, Category = "Voxel Cut")
+	ADynamicMeshActor* TargetActor;
 
-	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	void SetCutToolActor(ADynamicMeshActor* InCutToolActor);
+	UPROPERTY(EditAnywhere,BlueprintReadWrite, Category = "Voxel Cut")
+	ADynamicMeshActor* ToolActor;
 
 	// 开始/停止切削
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
@@ -33,7 +33,11 @@ public:
     
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
 	void StopCutting();
-
+	
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+	
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -44,19 +48,14 @@ public:
 
 private:
 	
-	// 切削工具
-	UPROPERTY()
-	ADynamicMeshActor* CuttingToolActor;
-	
 	// 切削工具网格组件
 	UPROPERTY()
-	UDynamicMeshComponent* CutToolComponent;
-	
-	// 切削对象
-	UPROPERTY()
-	ADynamicMeshActor* TargetActor;	
+	UDynamicMeshComponent* CutToolMeshComponent;
     
 	// 切削对象网格组件
 	UPROPERTY()
 	UDynamicMeshComponent* TargetMeshComponent;
+
+	void SetupComponents();
+	void CheckComponents();
 };

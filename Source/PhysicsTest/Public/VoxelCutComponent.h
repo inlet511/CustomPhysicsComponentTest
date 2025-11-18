@@ -119,6 +119,8 @@ private:
     
 	// 初始化切削系统
 	void InitializeCutSystem();
+
+	bool bSystemInitialized = false;
     
 	// 检查是否需要更新切削
 	bool NeedsCutUpdate(const FTransform& InCurrentToolTransform);

@@ -1,26 +1,30 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "CuttableObject.h"
+#include "VoxelDynamicMeshActor.h"
 #include "GeometryScript/MeshAssetFunctions.h"
 #include "DynamicMesh/MeshNormals.h"
 
 // Sets default values
-ACuttableObject::ACuttableObject()
+AVoxelDynamicMeshActor::AVoxelDynamicMeshActor()
 {
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 
 	// 创建根组件
-	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));   
+	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	
-    
+	UDynamicMeshComponent* MeshComp = GetDynamicMeshComponent();
 	// 启用碰撞
-	GetDynamicMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	//MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	MeshComp->SetupAttachment(RootComponent); // 显式附加
+	MeshComp->SetRelativeTransform(FTransform::Identity);
+	MeshComp->SetMobility(EComponentMobility::Movable);
+	MeshComp->SetSimulatePhysics(false);
 }
 
 
-void ACuttableObject::AssignMesh(UStaticMesh* InMesh)
+void AVoxelDynamicMeshActor::AssignMesh(UStaticMesh* InMesh)
 {
 	if (!IsValid(InMesh))
 		return;
@@ -41,9 +45,8 @@ void ACuttableObject::AssignMesh(UStaticMesh* InMesh)
 		MeshComp->UpdateBounds();
 		MeshComp->UpdateCollision();
 		// 计算法线
-		UE::Geometry::FMeshNormals::QuickComputeVertexNormals(*MeshComp->GetMesh());
-	
-		MeshComp->SetSimulatePhysics(false);
+		FMeshNormals::QuickComputeVertexNormals(*MeshComp->GetMesh());
+		
 		MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 		MeshComp->SetCollisionObjectType(ECC_WorldDynamic);
 		MeshComp->SetCollisionResponseToAllChannels(ECR_Overlap);
@@ -61,18 +64,32 @@ void ACuttableObject::AssignMesh(UStaticMesh* InMesh)
 }
 
 // Called when the game starts or when spawned
-void ACuttableObject::BeginPlay()
+void AVoxelDynamicMeshActor::BeginPlay()
 {
 	Super::BeginPlay();
-	if (SourceMesh)
-	{
-		AssignMesh(SourceMesh);		
-	}
-	
+
+    if (SourceMesh && !GetDynamicMeshComponent()->GetMesh())
+    {
+        AssignMesh(SourceMesh);
+    }
 }
 
+#if WITH_EDITOR
+void AVoxelDynamicMeshActor::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	// 检测是否修改了SourceMesh属性
+	FName PropertyName = (PropertyChangedEvent.Property != nullptr) ? PropertyChangedEvent.Property->GetFName() : NAME_None;
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AVoxelDynamicMeshActor, SourceMesh))
+	{
+		// 立即应用新模型到DynamicMeshComponent
+		AssignMesh(SourceMesh);
+	}
+}
+#endif
+
 // Called every frame
-void ACuttableObject::Tick(float DeltaTime)
+void AVoxelDynamicMeshActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 }

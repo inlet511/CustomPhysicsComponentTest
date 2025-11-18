@@ -59,7 +59,7 @@ void UVoxelCutComponent::SetTargetMesh(UDynamicMeshComponent* TargetMeshComp)
 {	
 	TargetMeshComponent = TargetMeshComp;
     
-	if (TargetMeshComponent)
+	if (!bSystemInitialized && TargetMeshComponent && CutToolMeshComponent)
 	{
 		InitializeCutSystem();
 	}
@@ -68,6 +68,10 @@ void UVoxelCutComponent::SetTargetMesh(UDynamicMeshComponent* TargetMeshComp)
 void UVoxelCutComponent::SetCutToolMesh(UDynamicMeshComponent* ToolMeshComp)
 {
 	CutToolMeshComponent = ToolMeshComp;
+	if (!bSystemInitialized && TargetMeshComponent && CutToolMeshComponent)
+	{
+		InitializeCutSystem();
+	}
 }
 
 void UVoxelCutComponent::StartCutting()
@@ -127,7 +131,7 @@ void UVoxelCutComponent::OnCutComplete(TUniquePtr<FDynamicMesh3> ResultMesh)
 
 void UVoxelCutComponent::InitializeCutSystem()
 {
-	if (!TargetMeshComponent)
+	if (bSystemInitialized || !TargetMeshComponent || !CutToolMeshComponent)
 		return;
     
 	// 创建切削操作器（只创建一次）
@@ -161,6 +165,8 @@ void UVoxelCutComponent::InitializeCutSystem()
 		// 设置目标变换
 		CutOp->TargetTransform = TargetMeshComponent->GetComponentTransform();
 	}
+
+	bSystemInitialized = true;
 }
 
 bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform)
