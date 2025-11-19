@@ -99,9 +99,7 @@ private:
 
 	// 单个可重用的切削操作器
 	TSharedPtr<FVoxelCutMeshOp> CutOp;
-    
-	// 持久化体素数据
-	TSharedPtr<FMaVoxelData> PersistentVoxelData;
+	
 
 	// 状态管理
 	std::atomic<ECutState> CutState;

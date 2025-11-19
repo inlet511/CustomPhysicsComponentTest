@@ -19,7 +19,6 @@ AVoxelCuttingActor::AVoxelCuttingActor()
 	TargetMeshComponent = nullptr;
 }
 
-
 void AVoxelCuttingActor::StartCutting()
 {
 	if (VoxelCutComponent)
@@ -35,6 +34,7 @@ void AVoxelCuttingActor::StopCutting()
 		VoxelCutComponent->StopCutting();
 	}
 }
+
 
 #if WITH_EDITOR
 void AVoxelCuttingActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)

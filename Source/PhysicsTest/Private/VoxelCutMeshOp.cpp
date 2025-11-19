@@ -8,6 +8,8 @@
 #include "Operations/MeshBoolean.h"
 #include "Generators/MarchingCubes.h"
 
+UE_DISABLE_OPTIMIZATION
+
 using namespace UE::Geometry;
 
 // FMaVoxelData 方法实现
@@ -60,25 +62,29 @@ void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
     {
         return;
     }
-
-    // 检查是否有持久化体素数据
-    if (!PersistentVoxelData.IsValid() || !PersistentVoxelData->IsValid())
+    
+    if (!bVoxelDataInitialized)
     {
-        // 首次运行：初始化体素数据
-        if (!InitializeVoxelData(Progress))
-        {
-            return;
-        }
-        bVoxelDataInitialized = true;
-    }
-    else
-    {
-        // 增量更新：基于现有体素数据进行切削
-        if (!IncrementalCut(Progress))
-        {
-            return;
+        // 检查是否有持久化体素数据
+        if (!PersistentVoxelData.IsValid() || !TargetMesh.IsValid())
+        {        
+            // 首次运行：初始化体素数据
+            if (!InitializeVoxelData(Progress))
+            {
+                return;
+            }
+            bVoxelDataInitialized = true;
+            UE_LOG(LogTemp, Warning, TEXT("VoxelData Initialized"));
         }
     }
+    
+    UE_LOG(LogTemp, Warning, TEXT("IncrementalCut Entry"));
+    // 增量更新：基于现有体素数据进行切削
+    if (!IncrementalCut(Progress))
+    {
+        return;
+    }
+    
 
     if (Progress && Progress->Cancelled())
     {
@@ -95,11 +101,13 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     {
         return false;
     }
-
+    UE_LOG(LogTemp, Warning, TEXT("InitializeVoxelData"));
+    
     // 创建新的体素数据容器
     if (!PersistentVoxelData.IsValid())
     {
         PersistentVoxelData = MakeShared<FMaVoxelData>();
+        PersistentVoxelData->VoxelSize = VoxelSize;
     }
 
     // 变换目标网格到世界空间
@@ -224,7 +232,7 @@ void FVoxelCutMeshOp::PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVox
     {
         return;
     }
-
+    UE_LOG(LogTemp, Warning, TEXT("PerformBooleanCut"));
     // 并行执行布尔减操作
     ParallelFor(TargetVoxels.GridSize, [&](int32 Z)
     {
@@ -251,6 +259,7 @@ void FVoxelCutMeshOp::PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVox
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)
 {
+    UE_LOG(LogTemp, Warning, TEXT("UpdateLocal Region"));
     // 变换刀具网格到世界空间
     FDynamicMesh3 TransformedToolMesh = ToolMesh;
     MeshTransforms::ApplyTransform(TransformedToolMesh, ToolTransform, true);
@@ -306,8 +315,73 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     });
 }
 
+
 void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress)
 {
+    // FMarchingCubes MarchingCubes;
+    // MarchingCubes.CubeSize = Voxels.VoxelSize;
+    // MarchingCubes.Bounds.Min = Voxels.GridOrigin;
+    // MarchingCubes.Bounds.Max = Voxels.GridOrigin + FVector3d(Voxels.GridSize) * Voxels.VoxelSize;
+    //
+    // MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
+    // {
+    //     // 将世界坐标转换为体素索引
+    //     FVector3d LocalPos = Pos / Voxels.VoxelSize;
+    //     int32 X = FMath::FloorToInt(LocalPos.X);
+    //     int32 Y = FMath::FloorToInt(LocalPos.Y);
+    //     int32 Z = FMath::FloorToInt(LocalPos.Z);
+    //     
+    //     // 检查边界
+    //     if (X < 0 || X >= Voxels.VoxelSize - 1 ||
+    //         Y < 0 || Y >= Voxels.VoxelSize - 1 ||
+    //         Z < 0 || Z >= Voxels.VoxelSize - 1)
+    //     {
+    //         return -1.0; // 边界外返回负值
+    //     }
+    //     
+    //     // 三线性插值获取体素值
+    //     double FracX = LocalPos.X - X;
+    //     double FracY = LocalPos.Y - Y;
+    //     double FracZ = LocalPos.Z - Z;
+    //     
+    //     int32 Index000 = X + Y * Voxels.VoxelSize + Z * Voxels.VoxelSize * Voxels.VoxelSize;
+    //     int32 Index100 = Index000 + 1;
+    //     int32 Index010 = Index000 + Voxels.VoxelSize;
+    //     int32 Index110 = Index010 + 1;
+    //     int32 Index001 = Index000 + Voxels.VoxelSize * Voxels.VoxelSize;
+    //     int32 Index101 = Index001 + 1;
+    //     int32 Index011 = Index001 + Voxels.VoxelSize;
+    //     int32 Index111 = Index011 + 1;
+    //     
+    //     // 确保索引有效
+    //     if (Index111 >= Voxels.Voxels.Num()) return -1.0;
+    //     
+    //     // 三线性插值
+    //     double V00 = FMath::Lerp(Voxels.Voxels[Index000], Voxels.Voxels[Index100], FracX);
+    //     double V01 = FMath::Lerp(Voxels.Voxels[Index010], Voxels.Voxels[Index110], FracX);
+    //     double V0 = FMath::Lerp(V00, V01, FracY);
+    //     
+    //     double V10 = FMath::Lerp(Voxels.Voxels[Index001], Voxels.Voxels[Index101], FracX);
+    //     double V11 = FMath::Lerp(Voxels.Voxels[Index011], Voxels.Voxels[Index111], FracX);
+    //     double V1 = FMath::Lerp(V10, V11, FracY);
+    //     
+    //     return FMath::Lerp(V0, V1, FracZ);
+    // };
+    //
+    // MarchingCubes.IsoValue = 0.0f;
+    //
+    // MarchingCubes.CancelF = [&Progress]()
+    // {
+    //     return Progress && Progress->Cancelled();
+    // };
+    //
+    // ResultMesh->Copy(&MarchingCubes.Generate());
+    //
+    // if (ResultMesh->TriangleCount() > 0)
+    // {
+    //     FMeshNormals::QuickComputeVertexNormals(*ResultMesh);
+    // }
+
     FMarchingCubes MarchingCubes;
     MarchingCubes.CubeSize = Voxels.VoxelSize;
     MarchingCubes.Bounds.Min = Voxels.GridOrigin;
@@ -315,36 +389,37 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     
     MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
     {
-        // 将世界坐标转换为体素索引
-        FVector3d LocalPos = Pos / Voxels.VoxelSize;
+        // 修正1: 正确的坐标转换
+        FVector3d LocalPos = (Pos - Voxels.GridOrigin) / Voxels.VoxelSize;
         int32 X = FMath::FloorToInt(LocalPos.X);
         int32 Y = FMath::FloorToInt(LocalPos.Y);
         int32 Z = FMath::FloorToInt(LocalPos.Z);
         
-        // 检查边界
-        if (X < 0 || X >= Voxels.VoxelSize - 1 ||
-            Y < 0 || Y >= Voxels.VoxelSize - 1 ||
-            Z < 0 || Z >= Voxels.VoxelSize - 1)
+        // 修正2: 使用 GridSize 进行边界检查
+        if (X < 0 || X >= Voxels.GridSize - 1 ||
+            Y < 0 || Y >= Voxels.GridSize - 1 ||
+            Z < 0 || Z >= Voxels.GridSize - 1)
         {
-            return -1.0; // 边界外返回负值
+            return -1.0;
         }
         
-        // 三线性插值获取体素值
         double FracX = LocalPos.X - X;
         double FracY = LocalPos.Y - Y;
         double FracZ = LocalPos.Z - Z;
         
-        int32 Index000 = X + Y * Voxels.VoxelSize + Z * Voxels.VoxelSize * Voxels.VoxelSize;
+        // 修正3: 使用 GridSize 计算索引
+        int32 Index000 = X + Y * Voxels.GridSize + Z * Voxels.GridSize * Voxels.GridSize;
         int32 Index100 = Index000 + 1;
-        int32 Index010 = Index000 + Voxels.VoxelSize;
+        int32 Index010 = Index000 + Voxels.GridSize;
         int32 Index110 = Index010 + 1;
-        int32 Index001 = Index000 + Voxels.VoxelSize * Voxels.VoxelSize;
+        int32 Index001 = Index000 + Voxels.GridSize * Voxels.GridSize;
         int32 Index101 = Index001 + 1;
-        int32 Index011 = Index001 + Voxels.VoxelSize;
+        int32 Index011 = Index001 + Voxels.GridSize;
         int32 Index111 = Index011 + 1;
         
         // 确保索引有效
-        if (Index111 >= Voxels.Voxels.Num()) return -1.0;
+        if (Index111 >= Voxels.Voxels.Num()) 
+            return -1.0;
         
         // 三线性插值
         double V00 = FMath::Lerp(Voxels.Voxels[Index000], Voxels.Voxels[Index100], FracX);
@@ -365,10 +440,18 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         return Progress && Progress->Cancelled();
     };
     
+    // 调试：检查体素数据
+    UE_LOG(LogTemp, Warning, TEXT("GridSize: %d, VoxelSize: %f, Voxels Num: %d"), 
+           Voxels.GridSize, Voxels.VoxelSize, Voxels.Voxels.Num());
+    
     ResultMesh->Copy(&MarchingCubes.Generate());
+    
+    UE_LOG(LogTemp, Warning, TEXT("Generated mesh triangle count: %d"), ResultMesh->TriangleCount());
     
     if (ResultMesh->TriangleCount() > 0)
     {
         FMeshNormals::QuickComputeVertexNormals(*ResultMesh);
     }
 }
+
+UE_ENABLE_OPTIMIZATION

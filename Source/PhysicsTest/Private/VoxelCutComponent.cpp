@@ -15,7 +15,9 @@ UVoxelCutComponent::UVoxelCutComponent()
 	bProcessing = false;
 	DistanceSinceLastUpdate = 0.0f;
     
-	PersistentVoxelData = MakeShared<FMaVoxelData>();
+	// PersistentVoxelData = MakeShared<FMaVoxelData>();
+	// PersistentVoxelData->VoxelSize = VoxelSize;
+	
 }
 
 void UVoxelCutComponent::BeginPlay()
@@ -148,9 +150,7 @@ void UVoxelCutComponent::InitializeCutSystem()
 	CutOp->bFillCutHole = bFillHoles;
 	CutOp->bIncrementalUpdate = true;
 	CutOp->UpdateMargin = 3;
-    
-	// 设置持久化数据
-	CutOp->PersistentVoxelData = PersistentVoxelData;
+	
     
 	// 获取目标网格数据
 	UDynamicMesh* TargetDynamicMesh = TargetMeshComponent->GetDynamicMesh();
@@ -235,14 +235,7 @@ void UVoxelCutComponent::RequestCut(const FTransform& ToolTransform)
 
 	ECutState currentState = CutState.load();
 	
-	UE_LOG(LogTemp, Warning, TEXT("Cut State: %s"),*StaticEnum<ECutState>()->GetNameStringByValue((int64)currentState));
-	ECutState S = currentState;
-
-	FString Msg = FString::Printf(TEXT("Cut State: %s"), *StaticEnum<ECutState>()->GetNameStringByValue((int64)S));
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, Msg);
-	}
+	//UE_LOG(LogTemp, Warning, TEXT("Cut State: %s"),*StaticEnum<ECutState>()->GetNameStringByValue((int64)currentState));
 	
 	// 只有在空闲状态或有新请求时才更新
 	if (currentState == ECutState::Idle || currentState == ECutState::Completed)
@@ -281,6 +274,8 @@ void UVoxelCutComponent::StartAsyncCut()
             {
                 try
                 {
+                	UE_LOG(LogTemp, Warning, TEXT("[%s, Line: %d]"),UTF8_TO_TCHAR(__FILE__),__LINE__);
+
                     CutOp->CalculateResult(nullptr);
                     
                     // 切削完成，回到主线程
