@@ -223,37 +223,85 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
     return true;
 }
 
+
+float SampleToolVoxelAtPosition(const FMaVoxelData& ToolVoxels, const FVector3d& WorldPos)
+{
+    // 将世界坐标转换为工具体素网格的局部坐标
+    FVector3d LocalPos = (WorldPos - ToolVoxels.GridOrigin) / ToolVoxels.VoxelSize;
+    
+    int32 X = FMath::FloorToInt(LocalPos.X);
+    int32 Y = FMath::FloorToInt(LocalPos.Y);
+    int32 Z = FMath::FloorToInt(LocalPos.Z);
+    
+    // 检查是否在工具体素网格范围内
+    if (X < 0 || X >= ToolVoxels.GridSize || 
+        Y < 0 || Y >= ToolVoxels.GridSize || 
+        Z < 0 || Z >= ToolVoxels.GridSize)
+    {
+        return 1.0f; // 外部
+    }
+    
+    int32 Index = ToolVoxels.GetVoxelIndex(X, Y, Z);
+    return ToolVoxels.Voxels[Index];
+}
+
 void FVoxelCutMeshOp::PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVoxelData& ToolVoxels, 
                                        FProgressCancel* Progress)
 {
-    // 确保两个体素网格参数匹配
-    if (TargetVoxels.GridSize != ToolVoxels.GridSize || 
-        TargetVoxels.GridOrigin != ToolVoxels.GridOrigin)
+
+    // 计算两个体素网格的世界空间重叠区域
+    FAxisAlignedBox3d TargetWorldBounds(
+        TargetVoxels.GridOrigin, 
+        TargetVoxels.GridOrigin + FVector3d(TargetVoxels.GridSize) * TargetVoxels.VoxelSize
+    );
+    
+    FAxisAlignedBox3d ToolWorldBounds(
+        ToolVoxels.GridOrigin,
+        ToolVoxels.GridOrigin + FVector3d(ToolVoxels.GridSize) * ToolVoxels.VoxelSize
+    );
+    
+    FAxisAlignedBox3d OverlapBounds = TargetWorldBounds.Intersect(ToolWorldBounds);
+    
+    if (!OverlapBounds.IsEmpty())
     {
-        return;
-    }
-    UE_LOG(LogTemp, Warning, TEXT("PerformBooleanCut"));
-    // 并行执行布尔减操作
-    ParallelFor(TargetVoxels.GridSize, [&](int32 Z)
-    {
-        if (Progress && Progress->Cancelled())
+        // 计算重叠区域在目标体素网格中的体素范围
+        FIntVector TargetMinVoxel = TargetVoxels.WorldToVoxel(OverlapBounds.Min);
+        FIntVector TargetMaxVoxel = TargetVoxels.WorldToVoxel(OverlapBounds.Max);
+    
+        // 裁剪到有效范围
+        TargetMinVoxel.X = FMath::Clamp(TargetMinVoxel.X, 0, TargetVoxels.GridSize - 1);
+        TargetMinVoxel.Y = FMath::Clamp(TargetMinVoxel.Y, 0, TargetVoxels.GridSize - 1);
+        TargetMinVoxel.Z = FMath::Clamp(TargetMinVoxel.Z, 0, TargetVoxels.GridSize - 1);
+    
+        TargetMaxVoxel.X = FMath::Clamp(TargetMaxVoxel.X, 0, TargetVoxels.GridSize - 1);
+        TargetMaxVoxel.Y = FMath::Clamp(TargetMaxVoxel.Y, 0, TargetVoxels.GridSize - 1);
+        TargetMaxVoxel.Z = FMath::Clamp(TargetMaxVoxel.Z, 0, TargetVoxels.GridSize - 1);
+    
+        ParallelFor(TargetMaxVoxel.Z - TargetMinVoxel.Z + 1, [&](int32 Dz)
         {
-            return;
-        }
+            if (Progress && Progress->Cancelled()) return;
         
-        for (int32 Y = 0; Y < TargetVoxels.GridSize; Y++)
-        {
-            for (int32 X = 0; X < TargetVoxels.GridSize; X++)
+            int32 Z = TargetMinVoxel.Z + Dz;
+            for (int32 Y = TargetMinVoxel.Y; Y <= TargetMaxVoxel.Y; Y++)
             {
-                int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);                
-                
-                if (ToolVoxels.Voxels[Index] < 0)
+                for (int32 X = TargetMinVoxel.X; X <= TargetMaxVoxel.X; X++)
                 {
-                    TargetVoxels.Voxels[Index] = FMath::Abs(TargetVoxels.Voxels[Index]);
+                    FVector3d WorldPos = TargetVoxels.GetVoxelWorldPosition(X, Y, Z);
+                
+                    // 查询工具体素在该位置的值（需要坐标转换）
+                    float ToolValue = SampleToolVoxelAtPosition(ToolVoxels, WorldPos);
+                
+                    int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);
+                
+                    // 如果工具在当前位置为内部，则执行切削
+                    if (ToolValue < 0)
+                    {
+                        TargetVoxels.Voxels[Index] = FMath::Abs(TargetVoxels.Voxels[Index]);
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 }
 
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
@@ -318,70 +366,6 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 
 void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress)
 {
-    // FMarchingCubes MarchingCubes;
-    // MarchingCubes.CubeSize = Voxels.VoxelSize;
-    // MarchingCubes.Bounds.Min = Voxels.GridOrigin;
-    // MarchingCubes.Bounds.Max = Voxels.GridOrigin + FVector3d(Voxels.GridSize) * Voxels.VoxelSize;
-    //
-    // MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
-    // {
-    //     // 将世界坐标转换为体素索引
-    //     FVector3d LocalPos = Pos / Voxels.VoxelSize;
-    //     int32 X = FMath::FloorToInt(LocalPos.X);
-    //     int32 Y = FMath::FloorToInt(LocalPos.Y);
-    //     int32 Z = FMath::FloorToInt(LocalPos.Z);
-    //     
-    //     // 检查边界
-    //     if (X < 0 || X >= Voxels.VoxelSize - 1 ||
-    //         Y < 0 || Y >= Voxels.VoxelSize - 1 ||
-    //         Z < 0 || Z >= Voxels.VoxelSize - 1)
-    //     {
-    //         return -1.0; // 边界外返回负值
-    //     }
-    //     
-    //     // 三线性插值获取体素值
-    //     double FracX = LocalPos.X - X;
-    //     double FracY = LocalPos.Y - Y;
-    //     double FracZ = LocalPos.Z - Z;
-    //     
-    //     int32 Index000 = X + Y * Voxels.VoxelSize + Z * Voxels.VoxelSize * Voxels.VoxelSize;
-    //     int32 Index100 = Index000 + 1;
-    //     int32 Index010 = Index000 + Voxels.VoxelSize;
-    //     int32 Index110 = Index010 + 1;
-    //     int32 Index001 = Index000 + Voxels.VoxelSize * Voxels.VoxelSize;
-    //     int32 Index101 = Index001 + 1;
-    //     int32 Index011 = Index001 + Voxels.VoxelSize;
-    //     int32 Index111 = Index011 + 1;
-    //     
-    //     // 确保索引有效
-    //     if (Index111 >= Voxels.Voxels.Num()) return -1.0;
-    //     
-    //     // 三线性插值
-    //     double V00 = FMath::Lerp(Voxels.Voxels[Index000], Voxels.Voxels[Index100], FracX);
-    //     double V01 = FMath::Lerp(Voxels.Voxels[Index010], Voxels.Voxels[Index110], FracX);
-    //     double V0 = FMath::Lerp(V00, V01, FracY);
-    //     
-    //     double V10 = FMath::Lerp(Voxels.Voxels[Index001], Voxels.Voxels[Index101], FracX);
-    //     double V11 = FMath::Lerp(Voxels.Voxels[Index011], Voxels.Voxels[Index111], FracX);
-    //     double V1 = FMath::Lerp(V10, V11, FracY);
-    //     
-    //     return FMath::Lerp(V0, V1, FracZ);
-    // };
-    //
-    // MarchingCubes.IsoValue = 0.0f;
-    //
-    // MarchingCubes.CancelF = [&Progress]()
-    // {
-    //     return Progress && Progress->Cancelled();
-    // };
-    //
-    // ResultMesh->Copy(&MarchingCubes.Generate());
-    //
-    // if (ResultMesh->TriangleCount() > 0)
-    // {
-    //     FMeshNormals::QuickComputeVertexNormals(*ResultMesh);
-    // }
-
     FMarchingCubes MarchingCubes;
     MarchingCubes.CubeSize = Voxels.VoxelSize;
     MarchingCubes.Bounds.Min = Voxels.GridOrigin;
@@ -396,41 +380,22 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         int32 Z = FMath::FloorToInt(LocalPos.Z);
         
         // 修正2: 使用 GridSize 进行边界检查
-        if (X < 0 || X >= Voxels.GridSize - 1 ||
-            Y < 0 || Y >= Voxels.GridSize - 1 ||
-            Z < 0 || Z >= Voxels.GridSize - 1)
+        if (X < 0 || X >= Voxels.GridSize ||
+            Y < 0 || Y >= Voxels.GridSize ||
+            Z < 0 || Z >= Voxels.GridSize )
         {
-            return -1.0;
+            return 1.0;
         }
         
-        double FracX = LocalPos.X - X;
-        double FracY = LocalPos.Y - Y;
-        double FracZ = LocalPos.Z - Z;
+        // 直接获取最近的体素值（不使用插值）
+        int32 Index = X + Y * Voxels.GridSize + Z * Voxels.GridSize * Voxels.GridSize;
         
-        // 修正3: 使用 GridSize 计算索引
-        int32 Index000 = X + Y * Voxels.GridSize + Z * Voxels.GridSize * Voxels.GridSize;
-        int32 Index100 = Index000 + 1;
-        int32 Index010 = Index000 + Voxels.GridSize;
-        int32 Index110 = Index010 + 1;
-        int32 Index001 = Index000 + Voxels.GridSize * Voxels.GridSize;
-        int32 Index101 = Index001 + 1;
-        int32 Index011 = Index001 + Voxels.GridSize;
-        int32 Index111 = Index011 + 1;
+        if (Index >= Voxels.Voxels.Num() || Index < 0)
+        {
+            return 1.0;
+        }
         
-        // 确保索引有效
-        if (Index111 >= Voxels.Voxels.Num()) 
-            return -1.0;
-        
-        // 三线性插值
-        double V00 = FMath::Lerp(Voxels.Voxels[Index000], Voxels.Voxels[Index100], FracX);
-        double V01 = FMath::Lerp(Voxels.Voxels[Index010], Voxels.Voxels[Index110], FracX);
-        double V0 = FMath::Lerp(V00, V01, FracY);
-        
-        double V10 = FMath::Lerp(Voxels.Voxels[Index001], Voxels.Voxels[Index101], FracX);
-        double V11 = FMath::Lerp(Voxels.Voxels[Index011], Voxels.Voxels[Index111], FracX);
-        double V1 = FMath::Lerp(V10, V11, FracY);
-        
-        return FMath::Lerp(V0, V1, FracZ);
+        return Voxels.Voxels[Index];
     };
 
     MarchingCubes.IsoValue = 0.0f;

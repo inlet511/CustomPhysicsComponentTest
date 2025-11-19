@@ -148,7 +148,7 @@ void UVoxelCutComponent::InitializeCutSystem()
 	CutOp->bSmoothCutEdges = bSmoothEdges;
 	CutOp->SmoothingStrength = SmoothingStrength;
 	CutOp->bFillCutHole = bFillHoles;
-	CutOp->bIncrementalUpdate = true;
+	CutOp->bIncrementalUpdate = false;
 	CutOp->UpdateMargin = 3;
 	
     
