@@ -2,6 +2,7 @@
 
 
 #include "VoxelCutComponent.h"
+#include "Engine/Engine.h"
 
 
 UVoxelCutComponent::UVoxelCutComponent()
@@ -95,9 +96,9 @@ void UVoxelCutComponent::StopCutting()
 
 
 
-void UVoxelCutComponent::OnCutComplete(TUniquePtr<FDynamicMesh3> ResultMesh)
+void UVoxelCutComponent::OnCutComplete(FDynamicMesh3* ResultMesh)
 {
-	if (ResultMesh.IsValid() && ResultMesh->TriangleCount() > 0)
+	if (ResultMesh && ResultMesh->TriangleCount() > 0)
 	{
 		// 更新结果网格
 		if (ResultMeshComponent)
@@ -173,7 +174,6 @@ bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform
 {
 	float Distance = FVector::Distance(LastToolPosition, InCurrentToolTransform.GetLocation());
 	float AngleDiff = FQuat::Error(LastToolRotation.Quaternion(), InCurrentToolTransform.GetRotation());
-    
 	return (DistanceSinceLastUpdate + Distance >= UpdateThreshold) || 
 		   (AngleDiff > FMath::DegreesToRadians(5.0f));
 }
@@ -232,11 +232,22 @@ void UVoxelCutComponent::RequestCut(const FTransform& ToolTransform)
     
 	// 保存当前请求数据
 	CurrentToolTransform = ToolTransform;
-    
-	// 只有在空闲状态或有新请求时才更新
-	if (CutState == ECutState::Idle || CutState == ECutState::Completed)
+
+	ECutState currentState = CutState.load();
+	
+	UE_LOG(LogTemp, Warning, TEXT("Cut State: %s"),*StaticEnum<ECutState>()->GetNameStringByValue((int64)currentState));
+	ECutState S = currentState;
+
+	FString Msg = FString::Printf(TEXT("Cut State: %s"), *StaticEnum<ECutState>()->GetNameStringByValue((int64)S));
+	if (GEngine)
 	{
-		CutState = ECutState::RequestPending;
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, Msg);
+	}
+	
+	// 只有在空闲状态或有新请求时才更新
+	if (currentState == ECutState::Idle || currentState == ECutState::Completed)
+	{		
+		CutState = ECutState::RequestPending;		
 	}
 	// 如果正在处理，新的请求会覆盖当前等待的请求
 	// 这样确保我们总是处理最新的工具位置
@@ -265,12 +276,6 @@ void UVoxelCutComponent::StartAsyncCut()
             CutOp->CutToolMesh = LocalToolMesh;
             CutOp->CutToolTransform = LocalToolTransform;
             
-            // 确保有ResultMesh
-            // if (!CutOp->ResultMesh.IsValid())
-            // {
-            //     CutOp->ResultMesh = MakeUnique<FDynamicMesh3>();
-            // }
-            
             // 在另一个异步线程中执行实际切削计算
             Async(EAsyncExecution::ThreadPool, [this]()
             {
@@ -281,9 +286,9 @@ void UVoxelCutComponent::StartAsyncCut()
                     // 切削完成，回到主线程
                     Async(EAsyncExecution::TaskGraphMainThread, [this]()
                     {
-                        TUniquePtr<FDynamicMesh3> ResultMesh = CutOp->ExtractResult();                        
+                        FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();                        
                         
-                        OnCutComplete(MoveTemp(ResultMesh));
+                        OnCutComplete(ResultMesh);
                     });
                 }
                 catch (const std::exception& e)

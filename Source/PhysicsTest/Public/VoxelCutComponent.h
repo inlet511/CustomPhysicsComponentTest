@@ -11,6 +11,16 @@
 
 using namespace UE::Geometry;
 
+// 切削状态枚举
+UENUM()
+enum class ECutState : uint8
+{
+	Idle,           // 空闲状态
+	RequestPending, // 有切削请求待处理
+	Processing,     // 正在处理切削
+	Completed       // 切削完成，等待下一帧更新
+};
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PHYSICSTEST_API UVoxelCutComponent : public UActorComponent
 {
@@ -67,14 +77,7 @@ protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
 
-	// 切削状态枚举
-	enum class ECutState
-	{
-		Idle,           // 空闲状态
-		RequestPending, // 有切削请求待处理
-		Processing,     // 正在处理切削
-		Completed       // 切削完成，等待下一帧更新
-	};
+	
 
 public:
 	// Called every frame
@@ -138,7 +141,7 @@ private:
 	void StartAsyncCut();
     
 	// 切削完成回调
-	void OnCutComplete(TUniquePtr<FDynamicMesh3> ResultMesh);
+	void OnCutComplete(FDynamicMesh3* ResultMesh);
     
 	// 复制工具网格（轻量级操作）
 	TSharedPtr<FDynamicMesh3> CopyToolMesh();

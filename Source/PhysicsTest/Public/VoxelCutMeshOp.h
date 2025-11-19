@@ -67,6 +67,11 @@ namespace UE
 			// 增量切削（基于现有体素数据）
 			bool IncrementalCut(FProgressCancel* Progress);
 
+			FDynamicMesh3* GetResultMesh() const
+			{
+				return ResultMesh.Get();
+			}
+
 		protected:
 			// 体素化方法
 			bool VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& Transform, 
