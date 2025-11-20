@@ -90,6 +90,9 @@ namespace UE
 		private:
 			// 内部状态
 			bool bVoxelDataInitialized = false;
+
+			void SmoothLocalVoxels(FMaVoxelData& Voxels, const FIntVector& Min, const FIntVector& Max, int32 Iterations);
+
 		};
 	}
 }

@@ -246,7 +246,6 @@ float SampleToolVoxelAtPosition(const FMaVoxelData& ToolVoxels, const FVector3d&
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)
 {
-    UE_LOG(LogTemp, Warning, TEXT("UpdateLocal Region"));
     // 变换刀具网格到世界空间
     FDynamicMesh3 TransformedToolMesh = ToolMesh;
     MeshTransforms::ApplyTransform(TransformedToolMesh, ToolTransform, true);
@@ -302,6 +301,9 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
             }
         }
     });
+
+    // 切削后对局部区域进行高斯平滑（减少体素值突变）
+    SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);
 }
 
 
@@ -323,22 +325,29 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         int32 Z = FMath::FloorToInt(LocalPos.Z);
         
         // 检查是否在有效体素范围内（预留边界，避免越界）
-        if (X < 0 || X >= Voxels.GridSize - 1 ||
-            Y < 0 || Y >= Voxels.GridSize - 1 ||
-            Z < 0 || Z >= Voxels.GridSize - 1)
+        if (X < 1 || X >= Voxels.GridSize - 2 ||
+            Y < 1 || Y >= Voxels.GridSize - 2 ||
+            Z < 1 || Z >= Voxels.GridSize - 2)
         {
             return 1.0; // 超出范围视为外部
         }
         
         // 计算插值权重（0~1之间）
-        double u = LocalPos.X - X;  // X方向权重
-        double v = LocalPos.Y - Y;  // Y方向权重
-        double w = LocalPos.Z - Z;  // Z方向权重
+        double u = FMath::Clamp(LocalPos.X - X, 0.0, 1.0);
+        double v = FMath::Clamp(LocalPos.Y - Y, 0.0, 1.0);
+        double w = FMath::Clamp(LocalPos.Z - Z, 0.0, 1.0);
         
-        // 获取周围8个顶点的体素值
+        // 获取周围8个顶点的体素值（带越界保护）
         auto GetVoxel = [&](int32 dx, int32 dy, int32 dz) -> float
         {
-            int32 Index = Voxels.GetVoxelIndex(X + dx, Y + dy, Z + dz);
+            int32 Tx = X + dx;
+            int32 Ty = Y + dy;
+            int32 Tz = Z + dz;
+            if (Tx < 0 || Tx >= Voxels.GridSize || Ty < 0 || Ty >= Voxels.GridSize || Tz < 0 || Tz >= Voxels.GridSize)
+            {
+                return 1.0f;
+            }
+            int32 Index = Voxels.GetVoxelIndex(Tx, Ty, Tz);
             return (Index >= 0 && Index < Voxels.Voxels.Num()) ? Voxels.Voxels[Index] : 1.0f;
         };
         
@@ -385,11 +394,58 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     {
         ResultMesh->ReverseOrientation(true);
         FMeshNormals::QuickComputeVertexNormals(*ResultMesh);
-
+        
         // 复原位置
         FTransform InverseTargetTransform = TargetTransform.Inverse();
         MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
     }
 }
+
+void FVoxelCutMeshOp::SmoothLocalVoxels(FMaVoxelData& Voxels, const FIntVector& Min, const FIntVector& Max,
+    int32 Iterations)
+{
+    const int32 GridSize = Voxels.GridSize;
+    TArray<float> TempVoxels = Voxels.Voxels; // 临时数组保存原始值
+
+    for (int32 It = 0; It < Iterations; It++)
+    {
+        for (int32 Z = Min.Z; Z <= Max.Z; Z++)
+        {
+            for (int32 Y = Min.Y; Y <= Max.Y; Y++)
+            {
+                for (int32 X = Min.X; X <= Max.X; X++)
+                {
+                    // 3x3x3邻域采样（中心权重更高）
+                    float Sum = 0.0f;
+                    float Weight = 0.0f;
+                    for (int32 dz = -1; dz <= 1; dz++)
+                    {
+                        for (int32 dy = -1; dy <= 1; dy++)
+                        {
+                            for (int32 dx = -1; dx <= 1; dx++)
+                            {
+                                int32 Tx = X + dx;
+                                int32 Ty = Y + dy;
+                                int32 Tz = Z + dz;
+                                if (Tx < 0 || Tx >= GridSize || Ty < 0 || Ty >= GridSize || Tz < 0 || Tz >= GridSize)
+                                    continue;
+
+                                // 中心体素权重为2，周围为1（简单高斯近似）
+                                float W = (dx == 0 && dy == 0 && dz == 0) ? 2.0f : 1.0f;
+                                Sum += TempVoxels[Voxels.GetVoxelIndex(Tx, Ty, Tz)] * W;
+                                Weight += W;
+                            }
+                        }
+                    }
+                    // 更新当前体素为邻域平均值
+                    Voxels.Voxels[Voxels.GetVoxelIndex(X, Y, Z)] = Sum / Weight;
+                }
+            }
+        }
+        TempVoxels = Voxels.Voxels; // 迭代更新临时数组
+    }
+}
+
+
 
 UE_ENABLE_OPTIMIZATION
