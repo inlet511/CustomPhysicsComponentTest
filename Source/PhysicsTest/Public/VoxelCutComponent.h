@@ -70,7 +70,7 @@ public:
 	
 	// 获取切削结果网格
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	UDynamicMeshComponent* GetResultMesh() const { return ResultMeshComponent; }
+	UDynamicMeshComponent* GetResultMesh() const { return TargetMeshComponent; }
 
 	
 protected:

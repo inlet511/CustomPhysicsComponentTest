@@ -372,29 +372,56 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     
     MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
     {
-        // 修正1: 正确的坐标转换
+        // 将世界坐标转换为体素网格的局部坐标（浮点）
         FVector3d LocalPos = (Pos - Voxels.GridOrigin) / Voxels.VoxelSize;
+        
+        // 计算周围8个体素的整数坐标和插值权重
         int32 X = FMath::FloorToInt(LocalPos.X);
         int32 Y = FMath::FloorToInt(LocalPos.Y);
         int32 Z = FMath::FloorToInt(LocalPos.Z);
         
-        // 修正2: 使用 GridSize 进行边界检查
-        if (X < 0 || X >= Voxels.GridSize ||
-            Y < 0 || Y >= Voxels.GridSize ||
-            Z < 0 || Z >= Voxels.GridSize )
+        // 检查是否在有效体素范围内（预留边界，避免越界）
+        if (X < 0 || X >= Voxels.GridSize - 1 ||
+            Y < 0 || Y >= Voxels.GridSize - 1 ||
+            Z < 0 || Z >= Voxels.GridSize - 1)
         {
-            return 1.0;
+            return 1.0; // 超出范围视为外部
         }
         
-        // 直接获取最近的体素值（不使用插值）
-        int32 Index = X + Y * Voxels.GridSize + Z * Voxels.GridSize * Voxels.GridSize;
+        // 计算插值权重（0~1之间）
+        double u = LocalPos.X - X;  // X方向权重
+        double v = LocalPos.Y - Y;  // Y方向权重
+        double w = LocalPos.Z - Z;  // Z方向权重
         
-        if (Index >= Voxels.Voxels.Num() || Index < 0)
+        // 获取周围8个顶点的体素值
+        auto GetVoxel = [&](int32 dx, int32 dy, int32 dz) -> float
         {
-            return 1.0;
-        }
+            int32 Index = Voxels.GetVoxelIndex(X + dx, Y + dy, Z + dz);
+            return (Index >= 0 && Index < Voxels.Voxels.Num()) ? Voxels.Voxels[Index] : 1.0f;
+        };
         
-        return Voxels.Voxels[Index];
+        float v000 = GetVoxel(0, 0, 0);
+        float v100 = GetVoxel(1, 0, 0);
+        float v010 = GetVoxel(0, 1, 0);
+        float v110 = GetVoxel(1, 1, 0);
+        float v001 = GetVoxel(0, 0, 1);
+        float v101 = GetVoxel(1, 0, 1);
+        float v011 = GetVoxel(0, 1, 1);
+        float v111 = GetVoxel(1, 1, 1);
+        
+        // 三线性插值计算
+        // 1. X方向插值
+        float x00 = FMath::Lerp(v000, v100, u);
+        float x10 = FMath::Lerp(v010, v110, u);
+        float x01 = FMath::Lerp(v001, v101, u);
+        float x11 = FMath::Lerp(v011, v111, u);
+        
+        // 2. Y方向插值
+        float y0 = FMath::Lerp(x00, x10, v);
+        float y1 = FMath::Lerp(x01, x11, v);
+        
+        // 3. Z方向插值
+        return FMath::Lerp(y0, y1, w);
     };
 
     MarchingCubes.IsoValue = 0.0f;
@@ -404,7 +431,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         return Progress && Progress->Cancelled();
     };
     
-    // 调试：检查体素数据
+    // 调试信息
     UE_LOG(LogTemp, Warning, TEXT("GridSize: %d, VoxelSize: %f, Voxels Num: %d"), 
            Voxels.GridSize, Voxels.VoxelSize, Voxels.Voxels.Num());
     
@@ -414,9 +441,12 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     
     if (ResultMesh->TriangleCount() > 0)
     {
-        
         ResultMesh->ReverseOrientation(true);
         FMeshNormals::QuickComputeVertexNormals(*ResultMesh);
+
+        // 复原位置
+        FTransform InverseTargetTransform = TargetTransform.Inverse();
+        MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
     }
 }
 
