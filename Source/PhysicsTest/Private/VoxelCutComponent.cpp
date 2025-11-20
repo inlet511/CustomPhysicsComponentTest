@@ -129,8 +129,8 @@ void UVoxelCutComponent::InitializeCutSystem()
 	CutOp->bSmoothCutEdges = bSmoothEdges;
 	CutOp->SmoothingStrength = SmoothingStrength;
 	CutOp->bFillCutHole = bFillHoles;
-	CutOp->bIncrementalUpdate = false;
-	CutOp->UpdateMargin = 3;
+	CutOp->bIncrementalUpdate = true;
+	CutOp->UpdateMargin = 5;
 	
     
 	// 获取目标网格数据
@@ -173,6 +173,7 @@ void UVoxelCutComponent::UpdateStateMachine()
 		// 有请求待处理，开始异步切削
 		if (!bProcessing)
 		{
+			UE_LOG(LogTemp, Warning, TEXT("Start Async Cut"));
 			StartAsyncCut();
 			CutState = ECutState::Processing;
 		}
@@ -209,7 +210,8 @@ void UVoxelCutComponent::RequestCut(const FTransform& ToolTransform)
 	// 只有在空闲状态或有新请求时才更新
 	if (currentState == ECutState::Idle || currentState == ECutState::Completed)
 	{		
-		CutState = ECutState::RequestPending;		
+		CutState = ECutState::RequestPending;
+		UE_LOG(LogTemp, Warning, TEXT("Request Pending"));
 	}
 	// 如果正在处理，新的请求会覆盖当前等待的请求
 	// 这样确保我们总是处理最新的工具位置
@@ -243,8 +245,6 @@ void UVoxelCutComponent::StartAsyncCut()
             {
                 try
                 {
-                	UE_LOG(LogTemp, Warning, TEXT("[%s, Line: %d]"),UTF8_TO_TCHAR(__FILE__),__LINE__);
-
                     CutOp->CalculateResult(nullptr);
                     
                     // 切削完成，回到主线程

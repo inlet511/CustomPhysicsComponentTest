@@ -150,18 +150,22 @@ bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)
     return !(Progress && Progress->Cancelled());
 }
 
-double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, const FVector3d& LocalPoint)
+double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<FDynamicMesh3> Winding, const FVector3d& LocalPoint, const FVector3d& WorldPoint)
 {
-    double NearestDistSqr;    
-    
+    double NearestDistSqr; 
     int NearestTriID = Spatial.FindNearestTriangle(LocalPoint, NearestDistSqr);
     
-    if (NearestTriID != IndexConstants::InvalidID)
+    if (NearestTriID == IndexConstants::InvalidID)
     {
-        return FMathd::Sqrt(NearestDistSqr);
+        return TNumericLimits<double>::Max();
     }
     
-    return TNumericLimits<double>::Max();
+    // 计算有符号距离（内部为负，外部为正）    
+    bool bInSide = Winding.IsInside(WorldPoint);    
+
+    double SignedDist =  FMathd::Sqrt(NearestDistSqr) * (bInSide? -1 : 1); 
+    
+    return SignedDist;
 }
 
 
@@ -210,11 +214,10 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
             {
                 FVector3d VoxelPos = VoxelData.GetVoxelWorldPosition(X, Y, Z);
                 FVector3d LocalVoxelPos = Transform.InverseTransformPosition(VoxelPos);
-                double Distance = GetDistanceToMesh(Spatial,LocalVoxelPos);
-                bool bInside = Winding.IsInside(VoxelPos);
-                
+                double Distance = GetDistanceToMesh(Spatial,Winding,LocalVoxelPos, VoxelPos);
+               
                 int32 Index = VoxelData.GetVoxelIndex(X, Y, Z);
-                VoxelData.Voxels[Index] = bInside ? -(float)Distance : (float)Distance;
+                VoxelData.Voxels[Index] = Distance;
             }
         }
     });
@@ -333,6 +336,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     
     // 创建刀具的AABB树
     FDynamicMeshAABBTree3 ToolSpatial(&TransformedToolMesh);
+    TFastWindingTree<FDynamicMesh3> ToolWinding(&ToolSpatial);
     
     // 只更新受影响区域
     ParallelFor(VoxelMax.Z - VoxelMin.Z + 1, [&](int32 Dz)
@@ -348,9 +352,10 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
             for (int32 X = VoxelMin.X; X <= VoxelMax.X; X++)
             {
                 FVector3d VoxelPos = TargetVoxels.GetVoxelWorldPosition(X, Y, Z);
+                FVector3d LocalPos = ToolTransform.InverseTransformPosition(VoxelPos);
                 
                 // 计算到刀具的距离
-                double ToolDistance = GetDistanceToMesh(ToolSpatial, VoxelPos);
+                double ToolDistance = GetDistanceToMesh(ToolSpatial,ToolWinding, LocalPos, VoxelPos);
                 
                 if (ToolDistance < 0)
                 {
