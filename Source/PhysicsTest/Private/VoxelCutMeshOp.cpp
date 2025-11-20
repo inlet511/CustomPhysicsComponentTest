@@ -2,11 +2,13 @@
 
 
 #include "VoxelCutMeshOp.h"
+
 #include "DynamicMesh/DynamicMeshAABBTree3.h"
 #include "DynamicMesh/MeshTransforms.h"
 #include "DynamicMesh/MeshNormals.h"
 #include "Operations/MeshBoolean.h"
 #include "Generators/MarchingCubes.h"
+#include "DynamicMesh/DynamicMesh3.h"
 
 UE_DISABLE_OPTIMIZATION
 
@@ -101,7 +103,6 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     {
         return false;
     }
-    UE_LOG(LogTemp, Warning, TEXT("InitializeVoxelData"));
     
     // 创建新的体素数据容器
     if (!PersistentVoxelData.IsValid())
@@ -113,7 +114,7 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     // 变换目标网格到世界空间
     FDynamicMesh3 TransformedTargetMesh = *TargetMesh;
     MeshTransforms::ApplyTransform(TransformedTargetMesh, TargetTransform, true);
-
+    
     // 计算平均平移作为结果变换的中心
     FVector3d AverageTranslation = TargetTransform.GetTranslation();
     ResultTransform = FTransformSRT3d(AverageTranslation);
@@ -151,9 +152,7 @@ bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)
 
 double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, const FVector3d& LocalPoint)
 {
-    double NearestDistSqr;
-
-    
+    double NearestDistSqr;    
     
     int NearestTriID = Spatial.FindNearestTriangle(LocalPoint, NearestDistSqr);
     
@@ -415,6 +414,8 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     
     if (ResultMesh->TriangleCount() > 0)
     {
+        
+        ResultMesh->ReverseOrientation(true);
         FMeshNormals::QuickComputeVertexNormals(*ResultMesh);
     }
 }

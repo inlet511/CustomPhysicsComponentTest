@@ -13,18 +13,12 @@ UVoxelCutComponent::UVoxelCutComponent()
 	CutState = ECutState::Idle;
 	bIsCutting = false;
 	bProcessing = false;
-	DistanceSinceLastUpdate = 0.0f;
-    
-	// PersistentVoxelData = MakeShared<FMaVoxelData>();
-	// PersistentVoxelData->VoxelSize = VoxelSize;
-	
+	DistanceSinceLastUpdate = 0.0f;	
 }
 
 void UVoxelCutComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-	CreateResultMeshComponent();	
 }
 
 
@@ -103,26 +97,13 @@ void UVoxelCutComponent::OnCutComplete(FDynamicMesh3* ResultMesh)
 	if (ResultMesh && ResultMesh->TriangleCount() > 0)
 	{
 		// 更新结果网格
-		if (ResultMeshComponent)
+		if (TargetMeshComponent)
 		{
-			UDynamicMesh* DynamicMesh = ResultMeshComponent->GetDynamicMesh();
+			UDynamicMesh* DynamicMesh = TargetMeshComponent->GetDynamicMesh();
 			if (DynamicMesh)
 			{
-				DynamicMesh->SetMesh(*ResultMesh);                
-				ResultMeshComponent->NotifyMeshUpdated();
-                
-				// 复制材质
-				if (TargetMeshComponent)
-				{
-					for (int32 i = 0; i < TargetMeshComponent->GetNumMaterials(); i++)
-					{
-						UMaterialInterface* Material = TargetMeshComponent->GetMaterial(i);
-						if (Material)
-						{
-							ResultMeshComponent->SetMaterial(i, Material);
-						}
-					}
-				}
+				DynamicMesh->SetMesh(*ResultMesh);    
+				TargetMeshComponent->NotifyMeshUpdated(); 
 			}
 		}
 	}
@@ -176,18 +157,6 @@ bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform
 	float AngleDiff = FQuat::Error(LastToolRotation.Quaternion(), InCurrentToolTransform.GetRotation());
 	return (DistanceSinceLastUpdate + Distance >= UpdateThreshold) || 
 		   (AngleDiff > FMath::DegreesToRadians(5.0f));
-}
-
-void UVoxelCutComponent::CreateResultMeshComponent()
-{
-	AActor* Owner = GetOwner();
-	if (!Owner)
-		return;
-    
-	ResultMeshComponent = NewObject<UDynamicMeshComponent>(Owner, TEXT("ResultMeshComponent"));
-	ResultMeshComponent->SetupAttachment(Owner->GetRootComponent());
-	ResultMeshComponent->RegisterComponent();
-	ResultMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 }
 
 void UVoxelCutComponent::UpdateStateMachine()

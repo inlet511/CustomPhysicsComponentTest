@@ -86,18 +86,15 @@ public:
 
 private:
 
-	// 目标网格和工具网格
+	// 目标网格
 	UPROPERTY()
 	UDynamicMeshComponent* TargetMeshComponent;
-    
+
+	// 工具网格
 	UPROPERTY()
 	UDynamicMeshComponent* CutToolMeshComponent;
 
-	// 结果网格组件
-	UPROPERTY()
-	UDynamicMeshComponent* ResultMeshComponent;
-
-	// 单个可重用的切削操作器
+	// 可重用的切削操作器
 	TSharedPtr<FVoxelCutMeshOp> CutOp;
 	
 
@@ -125,9 +122,6 @@ private:
     
 	// 检查是否需要更新切削
 	bool NeedsCutUpdate(const FTransform& InCurrentToolTransform);
-    
-	// 创建结果网格组件
-	void CreateResultMeshComponent();
     
 	// 状态机处理
 	void UpdateStateMachine();
