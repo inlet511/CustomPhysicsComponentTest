@@ -131,21 +131,10 @@ bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)
         return false;
     }
 
-    if (bIncrementalUpdate)
-    {
-        // 局部更新：只更新受刀具影响的区域
-        UpdateLocalRegion(*PersistentVoxelData, *CutToolMesh, 
-                         CutToolTransform, Progress);
-    }
-    else
-    {
-        // 全局更新：体素化刀具并执行布尔运算
-        FMaVoxelData ToolVoxelData;
-        if (VoxelizeMesh(*CutToolMesh, CutToolTransform, ToolVoxelData, Progress))
-        {
-            PerformBooleanCut(*PersistentVoxelData, ToolVoxelData, Progress);
-        }
-    }
+    // 局部更新：只更新受刀具影响的区域
+    UpdateLocalRegion(*PersistentVoxelData, *CutToolMesh, 
+                     CutToolTransform, Progress);
+    
 
     return !(Progress && Progress->Cancelled());
 }
@@ -247,64 +236,6 @@ float SampleToolVoxelAtPosition(const FMaVoxelData& ToolVoxels, const FVector3d&
     return ToolVoxels.Voxels[Index];
 }
 
-void FVoxelCutMeshOp::PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVoxelData& ToolVoxels, 
-                                       FProgressCancel* Progress)
-{
-
-    // 计算两个体素网格的世界空间重叠区域
-    FAxisAlignedBox3d TargetWorldBounds(
-        TargetVoxels.GridOrigin, 
-        TargetVoxels.GridOrigin + FVector3d(TargetVoxels.GridSize) * TargetVoxels.VoxelSize
-    );
-    
-    FAxisAlignedBox3d ToolWorldBounds(
-        ToolVoxels.GridOrigin,
-        ToolVoxels.GridOrigin + FVector3d(ToolVoxels.GridSize) * ToolVoxels.VoxelSize
-    );
-    
-    FAxisAlignedBox3d OverlapBounds = TargetWorldBounds.Intersect(ToolWorldBounds);
-    
-    if (!OverlapBounds.IsEmpty())
-    {
-        // 计算重叠区域在目标体素网格中的体素范围
-        FIntVector TargetMinVoxel = TargetVoxels.WorldToVoxel(OverlapBounds.Min);
-        FIntVector TargetMaxVoxel = TargetVoxels.WorldToVoxel(OverlapBounds.Max);
-    
-        // 裁剪到有效范围
-        TargetMinVoxel.X = FMath::Clamp(TargetMinVoxel.X, 0, TargetVoxels.GridSize - 1);
-        TargetMinVoxel.Y = FMath::Clamp(TargetMinVoxel.Y, 0, TargetVoxels.GridSize - 1);
-        TargetMinVoxel.Z = FMath::Clamp(TargetMinVoxel.Z, 0, TargetVoxels.GridSize - 1);
-    
-        TargetMaxVoxel.X = FMath::Clamp(TargetMaxVoxel.X, 0, TargetVoxels.GridSize - 1);
-        TargetMaxVoxel.Y = FMath::Clamp(TargetMaxVoxel.Y, 0, TargetVoxels.GridSize - 1);
-        TargetMaxVoxel.Z = FMath::Clamp(TargetMaxVoxel.Z, 0, TargetVoxels.GridSize - 1);
-    
-        ParallelFor(TargetMaxVoxel.Z - TargetMinVoxel.Z + 1, [&](int32 Dz)
-        {
-            if (Progress && Progress->Cancelled()) return;
-        
-            int32 Z = TargetMinVoxel.Z + Dz;
-            for (int32 Y = TargetMinVoxel.Y; Y <= TargetMaxVoxel.Y; Y++)
-            {
-                for (int32 X = TargetMinVoxel.X; X <= TargetMaxVoxel.X; X++)
-                {
-                    FVector3d WorldPos = TargetVoxels.GetVoxelWorldPosition(X, Y, Z);
-                
-                    // 查询工具体素在该位置的值（需要坐标转换）
-                    float ToolValue = SampleToolVoxelAtPosition(ToolVoxels, WorldPos);
-                
-                    int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);
-                
-                    // 如果工具在当前位置为内部，则执行切削
-                    if (ToolValue < 0)
-                    {
-                        TargetVoxels.Voxels[Index] = FMath::Abs(TargetVoxels.Voxels[Index]);
-                    }
-                }
-            }
-        });
-    }
-}
 
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)

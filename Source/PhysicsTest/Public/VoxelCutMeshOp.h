@@ -54,7 +54,6 @@ namespace UE
 			double SmoothingStrength = 0.5;
     
 			// 增量更新选项
-			bool bIncrementalUpdate = true;  // 是否只更新受影响区域
 			int32 UpdateMargin = 2;          // 更新边界扩展（体素单位）
 
 			void SetTransform(const FTransformSRT3d& Transform);

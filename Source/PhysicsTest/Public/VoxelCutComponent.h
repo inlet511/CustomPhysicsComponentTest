@@ -64,9 +64,6 @@ public:
 	// 切削状态
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
 	bool IsCutting() const { return bIsCutting; }
-    
-	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	bool IsProcessing() const { return bProcessing; }
 	
 	// 获取切削结果网格
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
@@ -97,11 +94,9 @@ private:
 	// 可重用的切削操作器
 	TSharedPtr<FVoxelCutMeshOp> CutOp;
 	
-
 	// 状态管理
-	std::atomic<ECutState> CutState;
+	ECutState CutState;
 	std::atomic<bool> bIsCutting;      // 用户是否在切削模式
-	std::atomic<bool> bProcessing;     // 是否有异步任务在进行
     
 	// 工具位置跟踪
 	FVector LastToolPosition;

@@ -12,7 +12,6 @@ UVoxelCutComponent::UVoxelCutComponent()
     
 	CutState = ECutState::Idle;
 	bIsCutting = false;
-	bProcessing = false;
 	DistanceSinceLastUpdate = 0.0f;	
 }
 
@@ -129,8 +128,8 @@ void UVoxelCutComponent::InitializeCutSystem()
 	CutOp->bSmoothCutEdges = bSmoothEdges;
 	CutOp->SmoothingStrength = SmoothingStrength;
 	CutOp->bFillCutHole = bFillHoles;
-	CutOp->bIncrementalUpdate = true;
 	CutOp->UpdateMargin = 5;
+	CutOp->CutToolMesh = CopyToolMesh();
 	
     
 	// 获取目标网格数据
@@ -163,35 +162,17 @@ void UVoxelCutComponent::UpdateStateMachine()
 {
 	FScopeLock Lock(&StateLock);
     
-	switch (CutState.load())
+	switch (CutState)
 	{
-	case ECutState::Idle:
-		// 空闲状态，等待请求
-		break;
-        
+	case ECutState::Idle:		
+		break;        
 	case ECutState::RequestPending:
-		// 有请求待处理，开始异步切削
-		if (!bProcessing)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Start Async Cut"));
-			StartAsyncCut();
-			CutState = ECutState::Processing;
-		}
-		break;
-        
+		StartAsyncCut();		
+		break;        
 	case ECutState::Processing:
-		// 正在处理，等待完成
-		break;
-        
+		break;        
 	case ECutState::Completed:
-		// 切削完成，准备处理下一个请求
-		bProcessing = false;
-        
-		// 检查是否有新的请求
-		if (CutState == ECutState::Completed) // 双重检查，避免竞态条件
-		{
-			CutState = ECutState::Idle;
-		}
+		CutState = ECutState::Idle;		
 		break;
 	}
 }
@@ -202,72 +183,56 @@ void UVoxelCutComponent::RequestCut(const FTransform& ToolTransform)
     
 	// 保存当前请求数据
 	CurrentToolTransform = ToolTransform;
-
-	ECutState currentState = CutState.load();
 	
-	//UE_LOG(LogTemp, Warning, TEXT("Cut State: %s"),*StaticEnum<ECutState>()->GetNameStringByValue((int64)currentState));
+	//UE_LOG(LogTemp, Warning, TEXT("Cut State: %s"),*StaticEnum<ECutState>()->GetNameStringByValue((int64)CutState));
 	
 	// 只有在空闲状态或有新请求时才更新
-	if (currentState == ECutState::Idle || currentState == ECutState::Completed)
+	if (CutState == ECutState::Idle || CutState == ECutState::Completed)
 	{		
 		CutState = ECutState::RequestPending;
 		UE_LOG(LogTemp, Warning, TEXT("Request Pending"));
 	}
-	// 如果正在处理，新的请求会覆盖当前等待的请求
-	// 这样确保我们总是处理最新的工具位置
 }
 
 void UVoxelCutComponent::StartAsyncCut()
 {
-	if (bProcessing)
-        return;
-        
-    bProcessing = true;
+	FScopeLock Lock(&StateLock);
+	// 如果已经在处理，则退出
+	if (CutState==ECutState::Processing)
+		return;
+	CutState = ECutState::Processing;
     
     // 复制当前状态到局部变量（避免竞态条件）
     FTransform LocalToolTransform = CurrentToolTransform;
+	
+    CutOp->CutToolTransform = LocalToolTransform;
     
-    // 在异步线程中复制工具网格（这是必要的，因为工具网格可能变化）
-    Async(EAsyncExecution::ThreadPool, [this, LocalToolTransform]()
+    // 在异步线程中执行实际切削计算
+    Async(EAsyncExecution::ThreadPool, [this]()
     {
-        // 复制工具网格（在异步线程中执行，避免阻塞主线程）
-        TSharedPtr<FDynamicMesh3> LocalToolMesh = CopyToolMesh();
-        
-        // 回到主线程设置操作器参数（确保线程安全）
-        Async(EAsyncExecution::TaskGraphMainThread, [this, LocalToolTransform, LocalToolMesh]()
+        try
         {
-            // 设置操作器参数
-            CutOp->CutToolMesh = LocalToolMesh;
-            CutOp->CutToolTransform = LocalToolTransform;
+            CutOp->CalculateResult(nullptr);
             
-            // 在另一个异步线程中执行实际切削计算
-            Async(EAsyncExecution::ThreadPool, [this]()
+            // 切削完成，回到主线程
+            Async(EAsyncExecution::TaskGraphMainThread, [this]()
             {
-                try
-                {
-                    CutOp->CalculateResult(nullptr);
-                    
-                    // 切削完成，回到主线程
-                    Async(EAsyncExecution::TaskGraphMainThread, [this]()
-                    {
-                        FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();                        
-                        
-                        OnCutComplete(ResultMesh);
-                    });
-                }
-                catch (const std::exception& e)
-                {
-                    UE_LOG(LogTemp, Error, TEXT("Cut operation failed: %s"), UTF8_TO_TCHAR(e.what()));
-                    
-                    Async(EAsyncExecution::TaskGraphMainThread, [this]()
-                    {
-                        // 即使失败也标记为完成
-                        FScopeLock Lock(&StateLock);
-                        CutState = ECutState::Completed;
-                    });
-                }
+                FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();               
+                
+                OnCutComplete(ResultMesh);
             });
-        });
+        }
+        catch (const std::exception& e)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Cut operation failed: %s"), UTF8_TO_TCHAR(e.what()));
+            
+            Async(EAsyncExecution::TaskGraphMainThread, [this]()
+            {
+                // 即使失败也标记为完成
+                FScopeLock Lock(&StateLock);
+                CutState = ECutState::Completed;
+            });
+        }
     });
 }
 
