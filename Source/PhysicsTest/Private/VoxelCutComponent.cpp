@@ -53,21 +53,12 @@ void UVoxelCutComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 void UVoxelCutComponent::SetTargetMesh(UDynamicMeshComponent* TargetMeshComp)
 {	
-	TargetMeshComponent = TargetMeshComp;
-    
-	if (!bSystemInitialized && TargetMeshComponent && CutToolMeshComponent)
-	{
-		InitializeCutSystem();
-	}
+	TargetMeshComponent = TargetMeshComp; 
 }
 
 void UVoxelCutComponent::SetCutToolMesh(UDynamicMeshComponent* ToolMeshComp)
 {
 	CutToolMeshComponent = ToolMeshComp;
-	if (!bSystemInitialized && TargetMeshComponent && CutToolMeshComponent)
-	{
-		InitializeCutSystem();
-	}
 }
 
 void UVoxelCutComponent::StartCutting()
@@ -145,6 +136,9 @@ void UVoxelCutComponent::InitializeCutSystem()
         
 		// 设置目标变换
 		CutOp->TargetTransform = TargetMeshComponent->GetComponentTransform();
+
+		// 体素化切割目标（只做一次）
+		CutOp->InitializeVoxelData(nullptr);
 	}
 
 	bSystemInitialized = true;

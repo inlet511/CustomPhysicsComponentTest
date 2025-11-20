@@ -9,6 +9,7 @@
 #include "Operations/MeshBoolean.h"
 #include "Generators/MarchingCubes.h"
 #include "DynamicMesh/DynamicMesh3.h"
+#include "HAL/PlatformTime.h"
 
 UE_DISABLE_OPTIMIZATION
 
@@ -67,34 +68,31 @@ void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
     
     if (!bVoxelDataInitialized)
     {
-        // 检查是否有持久化体素数据
-        if (!PersistentVoxelData.IsValid() || !TargetMesh.IsValid())
-        {        
-            // 首次运行：初始化体素数据
-            if (!InitializeVoxelData(Progress))
-            {
-                return;
-            }
-            bVoxelDataInitialized = true;
-            UE_LOG(LogTemp, Warning, TEXT("VoxelData Initialized"));
-        }
+        UE_LOG(LogTemp, Error, TEXT("Initialize Voxel Data First! (Call InitializeVoxelData())"));
+        return;
     }
-    
-    UE_LOG(LogTemp, Warning, TEXT("IncrementalCut Entry"));
+
+    double CutStart = FPlatformTime::Seconds();  // 开始时间    
     // 增量更新：基于现有体素数据进行切削
     if (!IncrementalCut(Progress))
     {
         return;
     }
-    
+    double CutEnd = FPlatformTime::Seconds();    // 结束时间
+    // 打印切削耗时
+    double CutTimeMs = (CutEnd - CutStart) * 1000.0;
+    UE_LOG(LogTemp, Log, TEXT("切削操作（IncrementalCut）耗时: %.2f 毫秒"), CutTimeMs);
 
-    if (Progress && Progress->Cancelled())
-    {
-        return;
-    }
-
+    // 生成最终网格 - 修正计时
+    double GenerateStart = FPlatformTime::Seconds();  // 开始时间
     // 生成最终网格
     ConvertVoxelsToMesh(*PersistentVoxelData, Progress);
+
+    double GenerateEnd = FPlatformTime::Seconds();    // 结束时间
+    
+    // 打印模型生成耗时
+    double GenerateTimeMs = (GenerateEnd - GenerateStart) * 1000.0;
+    UE_LOG(LogTemp, Log, TEXT("模型生成（ConvertVoxelsToMesh）耗时: %.2f 毫秒"), GenerateTimeMs);
 }
 
 bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
@@ -118,10 +116,18 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     // 计算平均平移作为结果变换的中心
     FVector3d AverageTranslation = TargetTransform.GetTranslation();
     ResultTransform = FTransformSRT3d(AverageTranslation);
+    
 
     // 体素化目标网格
-    return VoxelizeMesh(TransformedTargetMesh, FTransform::Identity, 
-                       *PersistentVoxelData, Progress);
+    double VoxelizeStart = FPlatformTime::Seconds();  // 开始时间（秒）
+    bool success = VoxelizeMesh(TransformedTargetMesh, FTransform::Identity,*PersistentVoxelData, Progress);
+    double VoxelizeEnd = FPlatformTime::Seconds();
+    // 转换为毫秒（1秒 = 1000毫秒）
+    double VoxelizeTimeMs = (VoxelizeEnd - VoxelizeStart) * 1000.0;
+    UE_LOG(LogTemp, Warning, TEXT("VoxelizeMesh 耗时: %.2f 毫秒"), VoxelizeTimeMs);    
+
+    bVoxelDataInitialized = true;    
+    return success;
 }
 
 bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)

@@ -69,6 +69,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
 	UDynamicMeshComponent* GetResultMesh() const { return TargetMeshComponent; }
 
+	// 初始化切削系统
+	void InitializeCutSystem();
 	
 protected:
 	// Called when the game starts
@@ -110,8 +112,7 @@ private:
 	// 线程同步
 	FCriticalSection StateLock;
     
-	// 初始化切削系统
-	void InitializeCutSystem();
+
 
 	bool bSystemInitialized = false;
     

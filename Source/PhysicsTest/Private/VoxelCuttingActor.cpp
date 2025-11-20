@@ -79,6 +79,8 @@ void AVoxelCuttingActor::BeginPlay()
 	{
 		VoxelCutComponent->SetCutToolMesh(CutToolMeshComponent);
 		VoxelCutComponent->SetTargetMesh(TargetMeshComponent);
+		VoxelCutComponent->InitializeCutSystem();
+		
 	}
 	
 }
