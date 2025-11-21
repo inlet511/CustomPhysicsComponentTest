@@ -13,43 +13,6 @@
 
 using namespace UE::Geometry;
 
-// FMaVoxelData 方法实现
-void FMaVoxelData::Serialize(FArchive& Ar)
-{
-    Ar << Voxels;
-    Ar << GridOrigin;
-    Ar << GridSize;
-    Ar << VoxelSize;
-    SerializeAxisAlignedBox3d(Ar, WorldBounds);
-}
-
-void FMaVoxelData::Reset()
-{
-    Voxels.Reset();
-    GridSize = 0;
-    VoxelSize = 0.0;
-    WorldBounds = FAxisAlignedBox3d::Empty();
-}
-
-int32 FMaVoxelData::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
-{
-    return Z * GridSize * GridSize + Y * GridSize + X;
-}
-
-FVector3d FMaVoxelData::GetVoxelWorldPosition(int32 X, int32 Y, int32 Z) const
-{
-    return GridOrigin + FVector3d(X, Y, Z) * VoxelSize;
-}
-
-FIntVector FMaVoxelData::WorldToVoxel(const FVector3d& WorldPos) const
-{
-    FVector3d LocalPos = WorldPos - GridOrigin;
-    return FIntVector(
-        FMath::FloorToInt(LocalPos.X / VoxelSize),
-        FMath::FloorToInt(LocalPos.Y / VoxelSize),
-        FMath::FloorToInt(LocalPos.Z / VoxelSize)
-    );
-}
 
 
 void FVoxelCutMeshOp::SetTransform(const FTransformSRT3d& Transform)
@@ -165,55 +128,24 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<
 bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& Transform, 
                                  FMaVoxelData& VoxelData, FProgressCancel* Progress)
 {
-    if (Mesh.TriangleCount() == 0)
+    if (Mesh.TriangleCount() == 0) 
     {
+        UE_LOG(LogTemp, Error, TEXT("VoxelizeMesh: Input mesh has no triangles"));
         return false;
     }
 
-    // 计算网格边界框
-    FAxisAlignedBox3d LocalBounds = Mesh.GetBounds();
-    FAxisAlignedBox3d WorldBounds(LocalBounds,Transform);
-    
+    double StartTime = FPlatformTime::Seconds();
     
     // 设置体素参数
-    FVector3d Extent = WorldBounds.Max - WorldBounds.Min;
-    double MaxExtent = Extent.GetMax();
-    
     VoxelData.VoxelSize = VoxelSize;
-    VoxelData.GridSize = FMath::CeilToInt(MaxExtent / VoxelSize) + 10;
-    VoxelData.GridOrigin = WorldBounds.Min - FVector3d(5.0 * VoxelSize);
-    VoxelData.WorldBounds = WorldBounds;
+    VoxelData.MinVoxelSize = VoxelSize * 0.5; // 最小体素大小为一半
+    VoxelData.MaxOctreeDepth = 8; // 适当的最大深度
     
-    // 初始化体素网格
-    VoxelData.Voxels.SetNumZeroed(VoxelData.GridSize * VoxelData.GridSize * VoxelData.GridSize);
+    // 使用八叉树优化
+    VoxelData.BuildOctreeFromMesh(Mesh, Transform);
     
-    // 创建AABB树用于快速查询
-    FDynamicMesh3 TransformedMesh = Mesh;
-    MeshTransforms::ApplyTransform(TransformedMesh, Transform, true);
-    FDynamicMeshAABBTree3 Spatial(&TransformedMesh);
-    TFastWindingTree<FDynamicMesh3> Winding(&Spatial);
-    
-    // 并行填充体素网格（提高性能）
-    ParallelFor(VoxelData.GridSize, [&](int32 Z)
-    {
-        if (Progress && Progress->Cancelled())
-        {
-            return;
-        }
-        
-        for (int32 Y = 0; Y < VoxelData.GridSize; Y++)
-        {
-            for (int32 X = 0; X < VoxelData.GridSize; X++)
-            {
-                FVector3d VoxelPos = VoxelData.GetVoxelWorldPosition(X, Y, Z);
-                FVector3d LocalVoxelPos = Transform.InverseTransformPosition(VoxelPos);
-                double Distance = GetDistanceToMesh(Spatial,Winding,LocalVoxelPos, VoxelPos);
-               
-                int32 Index = VoxelData.GetVoxelIndex(X, Y, Z);
-                VoxelData.Voxels[Index] = Distance;
-            }
-        }
-    });
+    double EndTime = FPlatformTime::Seconds();
+    UE_LOG(LogTemp, Warning, TEXT("网格体素化耗时: %.2f 毫秒"), (EndTime - StartTime) * 1000.0);
     
     return true;
 }
@@ -244,70 +176,81 @@ float SampleToolVoxelAtPosition(const FMaVoxelData& ToolVoxels, const FVector3d&
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)
 {
-    // 变换刀具网格到世界空间
+    if (!TargetVoxels.IsValid()) 
+    {
+        UE_LOG(LogTemp, Error, TEXT("UpdateLocalRegion: TargetVoxels is not valid"));
+        return;
+    }
+
+    double StartTime = FPlatformTime::Seconds();
+    
+    // 使用八叉树优化更新
     FDynamicMesh3 TransformedToolMesh = ToolMesh;
     MeshTransforms::ApplyTransform(TransformedToolMesh, ToolTransform, true);
     
-    // 计算刀具的边界框
-    FAxisAlignedBox3d ToolBounds = TransformedToolMesh.GetBounds();
-    
-    // 扩展边界（考虑更新边界）
-    FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.VoxelSize);
-    FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.VoxelSize);
-    
-    // 转换为体素坐标范围
-    FIntVector VoxelMin = TargetVoxels.WorldToVoxel(ExpandedMin);
-    FIntVector VoxelMax = TargetVoxels.WorldToVoxel(ExpandedMax);
-    
-    // 裁剪到有效范围
-    VoxelMin.X = FMath::Clamp(VoxelMin.X, 0, TargetVoxels.GridSize - 1);
-    VoxelMin.Y = FMath::Clamp(VoxelMin.Y, 0, TargetVoxels.GridSize - 1);
-    VoxelMin.Z = FMath::Clamp(VoxelMin.Z, 0, TargetVoxels.GridSize - 1);
-    
-    VoxelMax.X = FMath::Clamp(VoxelMax.X, 0, TargetVoxels.GridSize - 1);
-    VoxelMax.Y = FMath::Clamp(VoxelMax.Y, 0, TargetVoxels.GridSize - 1);
-    VoxelMax.Z = FMath::Clamp(VoxelMax.Z, 0, TargetVoxels.GridSize - 1);
-    
-    // 创建刀具的AABB树
     FDynamicMeshAABBTree3 ToolSpatial(&TransformedToolMesh);
+    ToolSpatial.Build();
+    
     TFastWindingTree<FDynamicMesh3> ToolWinding(&ToolSpatial);
     
-    // 只更新受影响区域
-    ParallelFor(VoxelMax.Z - VoxelMin.Z + 1, [&](int32 Dz)
-    {
-        if (Progress && Progress->Cancelled())
+    // 计算刀具的边界框（扩展更新边界）
+    FAxisAlignedBox3d ToolBounds = TransformedToolMesh.GetBounds();
+    FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.VoxelSize);
+    FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.VoxelSize);
+    FAxisAlignedBox3d UpdateBounds(ExpandedMin, ExpandedMax);
+    
+    // 使用八叉树局部更新
+    TargetVoxels.UpdateRegion(UpdateBounds, 
+        [&](const FVector3d& WorldPos) -> float
         {
-            return;
-        }
-        
-        int32 Z = VoxelMin.Z + Dz;
-        for (int32 Y = VoxelMin.Y; Y <= VoxelMax.Y; Y++)
-        {
-            for (int32 X = VoxelMin.X; X <= VoxelMax.X; X++)
+            FVector3d LocalPos = ToolTransform.InverseTransformPosition(WorldPos);
+            double ToolDistance = GetDistanceToMesh(ToolSpatial, ToolWinding, LocalPos, WorldPos);
+            
+            float CurrentValue = TargetVoxels.GetValueAtPosition(WorldPos);
+            
+            // 切削逻辑：如果工具在内部，设为正值（外部）
+            if (ToolDistance < 0 && CurrentValue < 0)
             {
-                FVector3d VoxelPos = TargetVoxels.GetVoxelWorldPosition(X, Y, Z);
-                FVector3d LocalPos = ToolTransform.InverseTransformPosition(VoxelPos);
-                
-                // 计算到刀具的距离
-                double ToolDistance = GetDistanceToMesh(ToolSpatial,ToolWinding, LocalPos, VoxelPos);
-                
-                if (ToolDistance < 0)
-                {
-                    int32 Index = TargetVoxels.GetVoxelIndex(X, Y, Z);
-                    TargetVoxels.Voxels[Index] = FMath::Abs(TargetVoxels.Voxels[Index]);
-                }
+                return FMath::Abs(CurrentValue); // 切削掉内部区域
             }
-        }
-    });
+            
+            return CurrentValue; // 保持原值
+        });
+    
+    double EndTime = FPlatformTime::Seconds();
+    UE_LOG(LogTemp, Warning, TEXT("局部区域更新耗时: %.2f 毫秒"), (EndTime - StartTime) * 1000.0);
 
     // 切削后对局部区域进行高斯平滑（减少体素值突变）
-    SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);
+    //SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);
 }
 
 
 void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress)
 {
+
+    if (Progress && Progress->Cancelled()) return;
+    
+    double StartTime = FPlatformTime::Seconds();
+    
     FMarchingCubes MarchingCubes;
+    
+    if (Voxels.bUseOctree)
+    {
+        // 使用八叉树边界
+        MarchingCubes.Bounds = Voxels.GetOctreeBounds();
+        MarchingCubes.CubeSize = Voxels.VoxelSize;
+        
+        // 使用八叉树进行采样
+        MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
+        {
+            return Voxels.GetValueAtPosition(Pos);
+        };
+    }
+    else
+    {
+        
+    
+   
     MarchingCubes.CubeSize = Voxels.VoxelSize;
     MarchingCubes.Bounds.Min = Voxels.GridOrigin;
     MarchingCubes.Bounds.Max = Voxels.GridOrigin + FVector3d(Voxels.GridSize) * Voxels.VoxelSize;
@@ -396,6 +339,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         // 复原位置
         FTransform InverseTargetTransform = TargetTransform.Inverse();
         MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
+    }
     }
 }
 
