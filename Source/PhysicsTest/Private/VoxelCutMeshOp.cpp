@@ -11,8 +11,6 @@
 #include "DynamicMesh/DynamicMesh3.h"
 #include "HAL/PlatformTime.h"
 
-UE_DISABLE_OPTIMIZATION
-
 using namespace UE::Geometry;
 
 // FMaVoxelData 方法实现
@@ -446,6 +444,3 @@ void FVoxelCutMeshOp::SmoothLocalVoxels(FMaVoxelData& Voxels, const FIntVector& 
     }
 }
 
-
-
-UE_ENABLE_OPTIMIZATION
