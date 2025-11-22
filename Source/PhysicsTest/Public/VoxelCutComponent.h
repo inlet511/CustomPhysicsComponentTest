@@ -32,11 +32,17 @@ public:
 
 	// 设置目标网格（需要被切削的物体）
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	void SetTargetMesh(UDynamicMeshComponent* TargetMeshComp);
+	void SetTargetMesh(UDynamicMeshComponent* TargetMeshComp)
+	{
+		TargetMeshComponent = TargetMeshComp;
+	}
 
 	// 设置切削工具网格
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	void SetCutToolMesh(UDynamicMeshComponent* ToolMeshComp);
+	void SetCutToolMesh(UDynamicMeshComponent* ToolMeshComp)
+	{
+		CutToolMeshComponent = ToolMeshComp;
+	}
 
 	// 开始/停止切削
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
@@ -47,10 +53,16 @@ public:
 
 	// 切削参数
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
-	float VoxelSize = 2.0f;
+	bool bSmoothEdges = true;
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
-	bool bSmoothEdges = true;
+	float MarchingCubeSize = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
+	int32 MaxOctreeDepth = 6;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
+	float MinVoxelSize = 0.5f;
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
 	float SmoothingStrength = 0.5f;
@@ -84,7 +96,7 @@ public:
 	                           FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-
+	
 	// 目标网格
 	UPROPERTY()
 	UDynamicMeshComponent* TargetMeshComponent;
@@ -133,4 +145,25 @@ private:
     
 	// 复制工具网格（轻量级操作）
 	TSharedPtr<FDynamicMesh3> CopyToolMesh();
+
+// Debug 相关信息
+	
+	/** 调试框信息 */
+	struct FDebugBoxInfo
+	{
+		FVector Center;
+		FVector Extent;
+		FColor Color;
+	};
+	
+	TArray<FDebugBoxInfo> DebugBoxes;
+	
+	void VisualizeOctreeNode();
+
+	void VisualizeOctreeNodeRecursive(const FOctreeNode& Node, int32 Depth);
+
+	void ClearOctreeVisualization();
+
+	void PrintOctreeDetails();
+	void PrintOctreeNodeRecursive(const FOctreeNode& Node, int32 Depth, int32& NodeCount, int32& LeafCount, int32& TotalVoxels);
 };

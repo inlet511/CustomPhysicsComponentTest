@@ -13,7 +13,7 @@
 
 using namespace UE::Geometry;
 
-
+UE_DISABLE_OPTIMIZATION
 
 void FVoxelCutMeshOp::SetTransform(const FTransformSRT3d& Transform)
 {
@@ -67,21 +67,14 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     if (!PersistentVoxelData.IsValid())
     {
         PersistentVoxelData = MakeShared<FMaVoxelData>();
-        PersistentVoxelData->VoxelSize = VoxelSize;
+        PersistentVoxelData->MarchingCubeSize = MarchingCubeSize;
+        PersistentVoxelData->MaxOctreeDepth = MaxOctreeDepth;
+        PersistentVoxelData->MinVoxelSize = MinVoxelSize;        
     }
-
-    // 变换目标网格到世界空间
-    FDynamicMesh3 TransformedTargetMesh = *TargetMesh;
-    MeshTransforms::ApplyTransform(TransformedTargetMesh, TargetTransform, true);
-    
-    // 计算平均平移作为结果变换的中心
-    FVector3d AverageTranslation = TargetTransform.GetTranslation();
-    ResultTransform = FTransformSRT3d(AverageTranslation);
-    
 
     // 体素化目标网格
     double VoxelizeStart = FPlatformTime::Seconds();  // 开始时间（秒）
-    bool success = VoxelizeMesh(TransformedTargetMesh, FTransform::Identity,*PersistentVoxelData, Progress);
+    bool success = VoxelizeMesh(*TargetMesh, TargetTransform,*PersistentVoxelData, Progress);
     double VoxelizeEnd = FPlatformTime::Seconds();
     // 转换为毫秒（1秒 = 1000毫秒）
     double VoxelizeTimeMs = (VoxelizeEnd - VoxelizeStart) * 1000.0;
@@ -110,6 +103,9 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<
 {
     double NearestDistSqr; 
     int NearestTriID = Spatial.FindNearestTriangle(LocalPoint, NearestDistSqr);
+
+    // UE_LOG(LogTemp, Warning, TEXT("查询点: Local=%s, World=%s"), 
+    //       *LocalPoint.ToString(), *WorldPoint.ToString());
     
     if (NearestTriID == IndexConstants::InvalidID)
     {
@@ -120,6 +116,9 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<
     bool bInSide = Winding.IsInside(WorldPoint);    
 
     double SignedDist =  FMathd::Sqrt(NearestDistSqr) * (bInSide? -1 : 1); 
+
+    UE_LOG(LogTemp, Warning, TEXT("最近距离平方: %f, 有符号距离: %f, 内部: %s"), 
+           NearestDistSqr, SignedDist, bInSide ? TEXT("是") : TEXT("否"));
     
     return SignedDist;
 }
@@ -133,15 +132,9 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
         UE_LOG(LogTemp, Error, TEXT("VoxelizeMesh: Input mesh has no triangles"));
         return false;
     }
-
     double StartTime = FPlatformTime::Seconds();
     
-    // 设置体素参数
-    VoxelData.VoxelSize = VoxelSize;
-    VoxelData.MinVoxelSize = VoxelSize * 0.5; // 最小体素大小为一半
-    VoxelData.MaxOctreeDepth = 8; // 适当的最大深度
-    
-    // 使用八叉树优化
+    // 从模型构建八叉树
     VoxelData.BuildOctreeFromMesh(Mesh, Transform);
     
     double EndTime = FPlatformTime::Seconds();
@@ -149,29 +142,6 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
     
     return true;
 }
-
-
-float SampleToolVoxelAtPosition(const FMaVoxelData& ToolVoxels, const FVector3d& WorldPos)
-{
-    // 将世界坐标转换为工具体素网格的局部坐标
-    FVector3d LocalPos = (WorldPos - ToolVoxels.GridOrigin) / ToolVoxels.VoxelSize;
-    
-    int32 X = FMath::FloorToInt(LocalPos.X);
-    int32 Y = FMath::FloorToInt(LocalPos.Y);
-    int32 Z = FMath::FloorToInt(LocalPos.Z);
-    
-    // 检查是否在工具体素网格范围内
-    if (X < 0 || X >= ToolVoxels.GridSize || 
-        Y < 0 || Y >= ToolVoxels.GridSize || 
-        Z < 0 || Z >= ToolVoxels.GridSize)
-    {
-        return 1.0f; // 外部
-    }
-    
-    int32 Index = ToolVoxels.GetVoxelIndex(X, Y, Z);
-    return ToolVoxels.Voxels[Index];
-}
-
 
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)
@@ -188,16 +158,26 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     FDynamicMesh3 TransformedToolMesh = ToolMesh;
     MeshTransforms::ApplyTransform(TransformedToolMesh, ToolTransform, true);
     
-    FDynamicMeshAABBTree3 ToolSpatial(&TransformedToolMesh);
-    ToolSpatial.Build();
-    
+    FDynamicMeshAABBTree3 ToolSpatial(&TransformedToolMesh);    
     TFastWindingTree<FDynamicMesh3> ToolWinding(&ToolSpatial);
+
+    FAxisAlignedBox3d TargetBounds = TargetVoxels.GetOctreeBounds();
     
     // 计算刀具的边界框（扩展更新边界）
     FAxisAlignedBox3d ToolBounds = TransformedToolMesh.GetBounds();
-    FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.VoxelSize);
-    FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.VoxelSize);
+
+    UE_LOG(LogTemp, Warning, TEXT("目标体边界: Min=%s, Max=%s"), 
+               *TargetBounds.Min.ToString(), *TargetBounds.Max.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("刀具边界: Min=%s, Max=%s"), 
+           *ToolBounds.Min.ToString(), *ToolBounds.Max.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("两者是否相交: %s"), 
+           TargetBounds.Intersects(ToolBounds) ? TEXT("是") : TEXT("否"));
+    
+    FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
+    FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
     FAxisAlignedBox3d UpdateBounds(ExpandedMin, ExpandedMax);
+
+    int32 UpdatedVoxels = 0;
     
     // 使用八叉树局部更新
     TargetVoxels.UpdateRegion(UpdateBounds, 
@@ -211,6 +191,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
             // 切削逻辑：如果工具在内部，设为正值（外部）
             if (ToolDistance < 0 && CurrentValue < 0)
             {
+                UpdatedVoxels++;
                 return FMath::Abs(CurrentValue); // 切削掉内部区域
             }
             
@@ -218,8 +199,8 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
         });
     
     double EndTime = FPlatformTime::Seconds();
-    UE_LOG(LogTemp, Warning, TEXT("局部区域更新耗时: %.2f 毫秒"), (EndTime - StartTime) * 1000.0);
-
+    UE_LOG(LogTemp, Warning, TEXT("局部区域更新耗时: %.2f 毫秒, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0, UpdatedVoxels);
+    
     // 切削后对局部区域进行高斯平滑（减少体素值突变）
     //SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);
 }
@@ -227,105 +208,22 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 
 void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress)
 {
-
     if (Progress && Progress->Cancelled()) return;
     
     double StartTime = FPlatformTime::Seconds();
     
     FMarchingCubes MarchingCubes;
+    // 使用八叉树边界
+    MarchingCubes.Bounds = Voxels.GetOctreeBounds();
+    MarchingCubes.CubeSize = Voxels.MarchingCubeSize;
     
-    if (Voxels.bUseOctree)
-    {
-        // 使用八叉树边界
-        MarchingCubes.Bounds = Voxels.GetOctreeBounds();
-        MarchingCubes.CubeSize = Voxels.VoxelSize;
-        
-        // 使用八叉树进行采样
-        MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
-        {
-            return Voxels.GetValueAtPosition(Pos);
-        };
-    }
-    else
-    {
-        
-    
-   
-    MarchingCubes.CubeSize = Voxels.VoxelSize;
-    MarchingCubes.Bounds.Min = Voxels.GridOrigin;
-    MarchingCubes.Bounds.Max = Voxels.GridOrigin + FVector3d(Voxels.GridSize) * Voxels.VoxelSize;
-    
+    // 使用八叉树进行采样
     MarchingCubes.Implicit = [&Voxels](const FVector3d& Pos) -> double
     {
-        // 将世界坐标转换为体素网格的局部坐标（浮点）
-        FVector3d LocalPos = (Pos - Voxels.GridOrigin) / Voxels.VoxelSize;
-        
-        // 计算周围8个体素的整数坐标和插值权重
-        int32 X = FMath::FloorToInt(LocalPos.X);
-        int32 Y = FMath::FloorToInt(LocalPos.Y);
-        int32 Z = FMath::FloorToInt(LocalPos.Z);
-        
-        // 检查是否在有效体素范围内（预留边界，避免越界）
-        if (X < 1 || X >= Voxels.GridSize - 2 ||
-            Y < 1 || Y >= Voxels.GridSize - 2 ||
-            Z < 1 || Z >= Voxels.GridSize - 2)
-        {
-            return 1.0; // 超出范围视为外部
-        }
-        
-        // 计算插值权重（0~1之间）
-        double u = FMath::Clamp(LocalPos.X - X, 0.0, 1.0);
-        double v = FMath::Clamp(LocalPos.Y - Y, 0.0, 1.0);
-        double w = FMath::Clamp(LocalPos.Z - Z, 0.0, 1.0);
-        
-        // 获取周围8个顶点的体素值（带越界保护）
-        auto GetVoxel = [&](int32 dx, int32 dy, int32 dz) -> float
-        {
-            int32 Tx = X + dx;
-            int32 Ty = Y + dy;
-            int32 Tz = Z + dz;
-            if (Tx < 0 || Tx >= Voxels.GridSize || Ty < 0 || Ty >= Voxels.GridSize || Tz < 0 || Tz >= Voxels.GridSize)
-            {
-                return 1.0f;
-            }
-            int32 Index = Voxels.GetVoxelIndex(Tx, Ty, Tz);
-            return (Index >= 0 && Index < Voxels.Voxels.Num()) ? Voxels.Voxels[Index] : 1.0f;
-        };
-        
-        float v000 = GetVoxel(0, 0, 0);
-        float v100 = GetVoxel(1, 0, 0);
-        float v010 = GetVoxel(0, 1, 0);
-        float v110 = GetVoxel(1, 1, 0);
-        float v001 = GetVoxel(0, 0, 1);
-        float v101 = GetVoxel(1, 0, 1);
-        float v011 = GetVoxel(0, 1, 1);
-        float v111 = GetVoxel(1, 1, 1);
-        
-        // 三线性插值计算
-        // 1. X方向插值
-        float x00 = FMath::Lerp(v000, v100, u);
-        float x10 = FMath::Lerp(v010, v110, u);
-        float x01 = FMath::Lerp(v001, v101, u);
-        float x11 = FMath::Lerp(v011, v111, u);
-        
-        // 2. Y方向插值
-        float y0 = FMath::Lerp(x00, x10, v);
-        float y1 = FMath::Lerp(x01, x11, v);
-        
-        // 3. Z方向插值
-        return FMath::Lerp(y0, y1, w);
+        return Voxels.GetValueAtPosition(Pos);
     };
 
     MarchingCubes.IsoValue = 0.0f;
-    
-    MarchingCubes.CancelF = [&Progress]()
-    {
-        return Progress && Progress->Cancelled();
-    };
-    
-    // 调试信息
-    UE_LOG(LogTemp, Warning, TEXT("GridSize: %d, VoxelSize: %f, Voxels Num: %d"), 
-           Voxels.GridSize, Voxels.VoxelSize, Voxels.Voxels.Num());
     
     ResultMesh->Copy(&MarchingCubes.Generate());
     
@@ -340,51 +238,6 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         FTransform InverseTargetTransform = TargetTransform.Inverse();
         MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
     }
-    }
 }
 
-void FVoxelCutMeshOp::SmoothLocalVoxels(FMaVoxelData& Voxels, const FIntVector& Min, const FIntVector& Max,
-    int32 Iterations)
-{
-    const int32 GridSize = Voxels.GridSize;
-    TArray<float> TempVoxels = Voxels.Voxels; // 临时数组保存原始值
-
-    for (int32 It = 0; It < Iterations; It++)
-    {
-        for (int32 Z = Min.Z; Z <= Max.Z; Z++)
-        {
-            for (int32 Y = Min.Y; Y <= Max.Y; Y++)
-            {
-                for (int32 X = Min.X; X <= Max.X; X++)
-                {
-                    // 3x3x3邻域采样（中心权重更高）
-                    float Sum = 0.0f;
-                    float Weight = 0.0f;
-                    for (int32 dz = -1; dz <= 1; dz++)
-                    {
-                        for (int32 dy = -1; dy <= 1; dy++)
-                        {
-                            for (int32 dx = -1; dx <= 1; dx++)
-                            {
-                                int32 Tx = X + dx;
-                                int32 Ty = Y + dy;
-                                int32 Tz = Z + dz;
-                                if (Tx < 0 || Tx >= GridSize || Ty < 0 || Ty >= GridSize || Tz < 0 || Tz >= GridSize)
-                                    continue;
-
-                                // 中心体素权重为2，周围为1（简单高斯近似）
-                                float W = (dx == 0 && dy == 0 && dz == 0) ? 2.0f : 1.0f;
-                                Sum += TempVoxels[Voxels.GetVoxelIndex(Tx, Ty, Tz)] * W;
-                                Weight += W;
-                            }
-                        }
-                    }
-                    // 更新当前体素为邻域平均值
-                    Voxels.Voxels[Voxels.GetVoxelIndex(X, Y, Z)] = Sum / Weight;
-                }
-            }
-        }
-        TempVoxels = Voxels.Voxels; // 迭代更新临时数组
-    }
-}
-
+UE_ENABLE_OPTIMIZATION

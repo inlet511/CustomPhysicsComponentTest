@@ -10,25 +10,7 @@
 namespace UE
 {
 	namespace Geometry
-	{
-
-		inline FArchive& SerializeAxisAlignedBox3d(FArchive& Ar, FAxisAlignedBox3d& Bounds)
-		{
-			FVector3d Min = Bounds.Min;
-			FVector3d Max = Bounds.Max;
-    
-			Ar << Min;
-			Ar << Max;
-    
-			if (Ar.IsLoading())
-			{
-				Bounds = FAxisAlignedBox3d(Min, Max);
-			}
-    
-			return Ar;
-		}		
-		
-		
+	{		
 		class PHYSICSTEST_API FVoxelCutMeshOp  : public FVoxelBaseOp
 		{
 		public:
@@ -49,7 +31,10 @@ namespace UE
 			double CutOffset = 0.0;
 			bool bFillCutHole = true;
 			bool bKeepBothParts = false;
-			double VoxelSize = 1.0;
+			double MarchingCubeSize = 2.0;
+			int32 MaxOctreeDepth = 6;
+			double MinVoxelSize = 0.5;
+			
 			bool bSmoothCutEdges = true;
 			double SmoothingStrength = 0.5;
     
@@ -76,10 +61,6 @@ namespace UE
 			bool VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& Transform, 
 							 FMaVoxelData& VoxelData, FProgressCancel* Progress);
     
-			// 布尔运算
-			void PerformBooleanCut(FMaVoxelData& TargetVoxels, const FMaVoxelData& ToolVoxels, 
-								  FProgressCancel* Progress);
-    
 			// 局部更新：只更新受刀具影响的区域
 			void UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
 								  const FTransform& ToolTransform, FProgressCancel* Progress);
@@ -89,9 +70,7 @@ namespace UE
     
 		private:
 			// 内部状态
-			bool bVoxelDataInitialized = false;
-
-			void SmoothLocalVoxels(FMaVoxelData& Voxels, const FIntVector& Min, const FIntVector& Max, int32 Iterations);
+			bool bVoxelDataInitialized = false;		
 
 		};
 	}

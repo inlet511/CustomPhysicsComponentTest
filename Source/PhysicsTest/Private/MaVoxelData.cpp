@@ -3,6 +3,7 @@
 #include "DynamicMesh/MeshTransforms.h"
 #include "Spatial/FastWinding.h"
 
+UE_DISABLE_OPTIMIZATION
 using namespace UE::Geometry;
 
 void FOctreeNode::Subdivide(double MinVoxelSize)
@@ -10,10 +11,10 @@ void FOctreeNode::Subdivide(double MinVoxelSize)
 	if (!bIsLeaf) return;
     
 	FVector3d Center = Bounds.Center();
-	FVector3d Extents = Bounds.Extents();
+    FVector3d Size = Bounds.Max - Bounds.Min;
     
 	// 如果节点尺寸已经小于最小体素尺寸，不进行细分
-	if (Extents.X < MinVoxelSize * 2.0 && Extents.Y < MinVoxelSize * 2.0 && Extents.Z < MinVoxelSize * 2.0)
+	if (Size.X < MinVoxelSize  && Size.Y < MinVoxelSize  && Size.Z < MinVoxelSize )
 	{
 		return;
 	}
@@ -51,30 +52,7 @@ bool FOctreeNode::IntersectsBounds(const FAxisAlignedBox3d& OtherBounds) const
 
 void FMaVoxelData::Reset()
 {
-	Voxels.Reset();
-	GridSize = 0;
-	VoxelSize = 0.0;
 	OctreeRoot = FOctreeNode();
-}
-
-int32 FMaVoxelData::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
-{
-	return Z * GridSize * GridSize + Y * GridSize + X;
-}
-
-FVector3d FMaVoxelData::GetVoxelWorldPosition(int32 X, int32 Y, int32 Z) const
-{
-	return GridOrigin + FVector3d(X, Y, Z) * VoxelSize;
-}
-
-FIntVector FMaVoxelData::WorldToVoxel(const FVector3d& WorldPos) const
-{
-	FVector3d LocalPos = WorldPos - GridOrigin;
-	return FIntVector(
-		FMath::FloorToInt(LocalPos.X / VoxelSize),
-		FMath::FloorToInt(LocalPos.Y / VoxelSize),
-		FMath::FloorToInt(LocalPos.Z / VoxelSize)
-	);
 }
 
 void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransform& Transform)
@@ -92,24 +70,23 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
     FAxisAlignedBox3d WorldBounds(LocalBounds, Transform);
     
     // 设置八叉树根节点边界（稍微扩展）
-    FVector3d ExpandedMin = WorldBounds.Min - FVector3d(10.0 * VoxelSize);
-    FVector3d ExpandedMax = WorldBounds.Max + FVector3d(10.0 * VoxelSize);
+    FVector3d ExpandedMin = WorldBounds.Min - FVector3d(10.0 * MarchingCubeSize);
+    FVector3d ExpandedMax = WorldBounds.Max + FVector3d(10.0 * MarchingCubeSize);
     OctreeRoot.Bounds = FAxisAlignedBox3d(ExpandedMin, ExpandedMax);
     OctreeRoot.Depth = 0;
     OctreeRoot.bIsLeaf = true;
     OctreeRoot.bIsEmpty = true;
     
     // 创建空间查询结构
-    FDynamicMesh3 TransformedMesh = Mesh;
-    MeshTransforms::ApplyTransform(TransformedMesh, Transform, true);
-    FDynamicMeshAABBTree3 Spatial(&TransformedMesh);    
+    FDynamicMesh3 WorldSpaceMesh = Mesh;
+    MeshTransforms::ApplyTransform(WorldSpaceMesh, Transform, true);
+    FDynamicMeshAABBTree3 Spatial(&WorldSpaceMesh);    
     TFastWindingTree<FDynamicMesh3> Winding(&Spatial);
     
     // 递归构建八叉树
     TFunction<void(FOctreeNode&)> BuildNode = [&](FOctreeNode& Node)
-    {       
-        
-        FVector3d NodeSize = Node.Bounds.Extents();
+    {
+        FVector3d NodeSize = Node.Bounds.Max - Node.Bounds.Min;
         double MinNodeSize = NodeSize.GetMin();
         
         // 如果节点足够小或者达到最大深度，设为叶子节点
@@ -143,8 +120,8 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
                         FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
                         FVector3d WorldPos = Node.Bounds.Min + LocalPos;
                         
-                        float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos, Transform);
-                        
+                        float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
+                        UE_LOG(LogTemp,Warning, TEXT("WorldPos:(%f,%f,%f), Point Distance:%f, NodeSize.GetMax()*2.0 = %f"), WorldPos.X, WorldPos.Y, WorldPos.Z, Distance, NodeSize.GetMax() * 2.0);
                         int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
                         Node.Voxels[Index] = Distance;
                         
@@ -183,26 +160,12 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
     
     double EndTime = FPlatformTime::Seconds();
     UE_LOG(LogTemp, Warning, TEXT("八叉树构建耗时: %.2f 毫秒"), (EndTime - StartTime) * 1000.0);
-    
-    bUseOctree = true;
+
     DebugLogOctreeStats();
 }
 
 float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
 {
-	if (!bUseOctree)
-    {
-        // 回退到均匀网格查询
-        FIntVector VoxelCoord = WorldToVoxel(WorldPos);
-        if (VoxelCoord.X < 0 || VoxelCoord.X >= GridSize || 
-            VoxelCoord.Y < 0 || VoxelCoord.Y >= GridSize || 
-            VoxelCoord.Z < 0 || VoxelCoord.Z >= GridSize)
-            return 1.0f;
-        
-        int32 Index = GetVoxelIndex(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z);
-        return (Index >= 0 && Index < Voxels.Num()) ? Voxels[Index] : 1.0f;
-    }
-    
     // 八叉树查询
     TFunction<float(const FOctreeNode&, const FVector3d&)> QueryNode = 
     [&](const FOctreeNode& Node, const FVector3d& Point) -> float
@@ -215,12 +178,12 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
             
             // 在叶子节点内插值
             FVector3d LocalPos = Point - Node.Bounds.Min;
-            FVector3d Extents = Node.Bounds.Extents();
+            FVector3d Size = Node.Bounds.Max - Node.Bounds.Min;
             
             int32 VoxelsPerSide = FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Node.Voxels.Num())));
             if (VoxelsPerSide <= 1) return 1.0f;
             
-            FVector3d VoxelSizeLeaf = Extents / (VoxelsPerSide - 1);
+            FVector3d VoxelSizeLeaf = Size / (VoxelsPerSide - 1);
             
             FVector3d Coord = LocalPos / VoxelSizeLeaf;
             int32 X = FMath::Clamp(FMath::FloorToInt(Coord.X), 0, VoxelsPerSide - 2);
@@ -278,8 +241,6 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
 void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
 	const TFunctionRef<float(const FVector3d&)>& UpdateFunction)
 {
-	if (!bUseOctree) return;
-    
     TFunction<void(FOctreeNode&)> UpdateNode = [&](FOctreeNode& Node)
     {
         if (!Node.IntersectsBounds(UpdateBounds)) return;
@@ -292,7 +253,7 @@ void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
             int32 VoxelsPerSide = FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Node.Voxels.Num())));
             if (VoxelsPerSide <= 1) return;
             
-            FVector3d VoxelSizeLeaf = Node.Bounds.Extents() / (VoxelsPerSide - 1);
+            FVector3d VoxelSizeLeaf = (Node.Bounds.Max - Node.Bounds.Min) / (VoxelsPerSide - 1);
             bool bBecameNonEmpty = false;
             
             for (int32 Z = 0; Z < VoxelsPerSide; Z++)
@@ -354,8 +315,6 @@ void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
 
 void FMaVoxelData::DebugLogOctreeStats() const
 {
-    if (!bUseOctree) return;
-    
     int32 LeafCount = 0;
     int32 NonEmptyLeafCount = 0;
     int32 TotalVoxels = 0;
@@ -387,14 +346,11 @@ void FMaVoxelData::DebugLogOctreeStats() const
 }
 
 float FMaVoxelData::CalculateDistanceToMesh(const FDynamicMeshAABBTree3& Spatial,
-	TFastWindingTree<FDynamicMesh3>& Winding, const FVector3d& WorldPos, const FTransform& MeshTransform) const
-{
-    // 将世界坐标转换到网格局部空间
-    FVector3d LocalPos = MeshTransform.InverseTransformPosition(WorldPos);
-    
+	TFastWindingTree<FDynamicMesh3>& Winding, const FVector3d& Pos) const
+{    
     // 使用AABB树查找最近三角形
     double NearestDistSqr; 
-    int32 NearestTriID = Spatial.FindNearestTriangle(LocalPos, NearestDistSqr);
+    int32 NearestTriID = Spatial.FindNearestTriangle(Pos, NearestDistSqr);
     
     if (NearestTriID == IndexConstants::InvalidID)
     {
@@ -403,10 +359,11 @@ float FMaVoxelData::CalculateDistanceToMesh(const FDynamicMeshAABBTree3& Spatial
     double NearestDist = FMath::Sqrt(NearestDistSqr);
     
     // 使用绕数法判断点在网格内部还是外部
-    bool bIsInside = Winding.IsInside(WorldPos);
+    bool bIsInside = Winding.IsInside(Pos);
     
     // 内部点距离为负，外部点距离为正
     float SignedDistance = bIsInside ? -NearestDist : NearestDist;
     
     return (float)SignedDistance;
 }
+UE_ENABLE_OPTIMIZATION
