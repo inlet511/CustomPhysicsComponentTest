@@ -107,8 +107,8 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
     FAxisAlignedBox3d WorldBounds(LocalBounds, Transform);
     
     // 设置八叉树根节点边界（稍微扩展）
-    FVector3d ExpandedMin = WorldBounds.Min - FVector3d(10.0 * MarchingCubeSize);
-    FVector3d ExpandedMax = WorldBounds.Max + FVector3d(10.0 * MarchingCubeSize);
+    FVector3d ExpandedMin = WorldBounds.Min - FVector3d(2.0 * MarchingCubeSize);
+    FVector3d ExpandedMax = WorldBounds.Max + FVector3d(2.0 * MarchingCubeSize);
     OctreeRoot.Bounds = FAxisAlignedBox3d(ExpandedMin, ExpandedMax);
     OctreeRoot.Depth = 0;
     OctreeRoot.bIsLeaf = true;
@@ -141,8 +141,8 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
             {
                 VoxelsPerSide = 8; // 较大节点
             }
-            
             Node.Voxels.SetNumZeroed(VoxelsPerSide * VoxelsPerSide * VoxelsPerSide);
+            Node.VoxelsPerSide = VoxelsPerSide;
             
             // 计算叶子节点内每个体素的值
             FVector3d VoxelSizeLeaf = Node.Bounds.Extents() / (VoxelsPerSide - 1);
@@ -216,7 +216,7 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
             FVector3d LocalPos = Point - Node.Bounds.Min;
             FVector3d Size = Node.Bounds.Max - Node.Bounds.Min;
             
-            int32 VoxelsPerSide = FMath::RoundToInt(FMath::Pow(static_cast<float>(Node.Voxels.Num()),1.0f/3.0f));
+            int32 VoxelsPerSide = Node.VoxelsPerSide;
             if (VoxelsPerSide <= 1) return 1.0f;
             
             FVector3d VoxelSizeLeaf = Size / (VoxelsPerSide - 1);
@@ -286,7 +286,7 @@ void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
             if (Node.bIsEmpty) return;
             
             // 更新叶子节点内的体素
-            int32 VoxelsPerSide = FMath::RoundToInt(FMath::Pow(static_cast<float>(Node.Voxels.Num()),1.0f/3.0f));
+            int32 VoxelsPerSide = Node.VoxelsPerSide;
             if (VoxelsPerSide <= 1) return;
             
             FVector3d VoxelSizeLeaf = (Node.Bounds.Max - Node.Bounds.Min) / (VoxelsPerSide - 1);

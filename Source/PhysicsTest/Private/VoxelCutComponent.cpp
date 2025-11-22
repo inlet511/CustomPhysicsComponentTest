@@ -187,7 +187,7 @@ void UVoxelCutComponent::RequestCut(const FTransform& ToolTransform)
 	if (CutState == ECutState::Idle || CutState == ECutState::Completed)
 	{		
 		CutState = ECutState::RequestPending;
-		UE_LOG(LogTemp, Warning, TEXT("Request Pending"));
+		//UE_LOG(LogTemp, Warning, TEXT("Request Pending"));
 	}
 }
 

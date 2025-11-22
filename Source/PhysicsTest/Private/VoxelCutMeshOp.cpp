@@ -33,16 +33,16 @@ void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
         return;
     }
 
-    double CutStart = FPlatformTime::Seconds();  // 开始时间    
+    //double CutStart = FPlatformTime::Seconds();  // 开始时间    
     // 增量更新：基于现有体素数据进行切削
     if (!IncrementalCut(Progress))
     {
         return;
     }
-    double CutEnd = FPlatformTime::Seconds();    // 结束时间
+    //double CutEnd = FPlatformTime::Seconds();    // 结束时间
     // 打印切削耗时
-    double CutTimeMs = (CutEnd - CutStart) * 1000.0;
-    UE_LOG(LogTemp, Log, TEXT("切削操作（IncrementalCut）耗时: %.2f 毫秒"), CutTimeMs);
+    //double CutTimeMs = (CutEnd - CutStart) * 1000.0;
+    //UE_LOG(LogTemp, Log, TEXT("切削操作（IncrementalCut）耗时: %.2f 毫秒"), CutTimeMs);
 
     // 生成最终网格 - 修正计时
     double GenerateStart = FPlatformTime::Seconds();  // 开始时间
@@ -53,7 +53,7 @@ void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
     
     // 打印模型生成耗时
     double GenerateTimeMs = (GenerateEnd - GenerateStart) * 1000.0;
-    UE_LOG(LogTemp, Log, TEXT("模型生成（ConvertVoxelsToMesh）耗时: %.2f 毫秒"), GenerateTimeMs);
+    UE_LOG(LogTemp, Warning, TEXT("模型生成耗时: %.2f 毫秒"), GenerateTimeMs);
 }
 
 bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
@@ -161,12 +161,12 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     // 计算刀具的边界框（扩展更新边界）
     FAxisAlignedBox3d ToolBounds = TransformedToolMesh.GetBounds();
 
-    UE_LOG(LogTemp, Warning, TEXT("目标体边界: Min=%s, Max=%s"), 
-               *TargetBounds.Min.ToString(), *TargetBounds.Max.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("刀具边界: Min=%s, Max=%s"), 
-           *ToolBounds.Min.ToString(), *ToolBounds.Max.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("两者是否相交: %s"), 
-           TargetBounds.Intersects(ToolBounds) ? TEXT("是") : TEXT("否"));
+    // UE_LOG(LogTemp, Warning, TEXT("目标体边界: Min=%s, Max=%s"), 
+    //            *TargetBounds.Min.ToString(), *TargetBounds.Max.ToString());
+    // UE_LOG(LogTemp, Warning, TEXT("刀具边界: Min=%s, Max=%s"), 
+    //        *ToolBounds.Min.ToString(), *ToolBounds.Max.ToString());
+    // UE_LOG(LogTemp, Warning, TEXT("两者是否相交: %s"), 
+    //        TargetBounds.Intersects(ToolBounds) ? TEXT("是") : TEXT("否"));
     
     FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
     FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);

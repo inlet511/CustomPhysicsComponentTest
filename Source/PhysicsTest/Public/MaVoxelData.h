@@ -13,6 +13,7 @@ struct PHYSICSTEST_API FOctreeNode
 	FAxisAlignedBox3d Bounds;
 	TArray<FOctreeNode> Children;
 	TArray<float> Voxels; // 叶子节点存储体素数据
+	int32 VoxelsPerSide = 0; // 每边体素数量
 	int32 Depth = 0;
 	bool bIsLeaf = true;
 	bool bIsEmpty = true; // 标记节点是否为空（优化用）
