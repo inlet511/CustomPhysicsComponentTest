@@ -66,6 +66,9 @@ public:
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
 	float SmoothingStrength = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
+	int32 SmoothingIteration = 2;
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
 	bool bFillHoles = true;

@@ -33,10 +33,10 @@ namespace UE
 			bool bKeepBothParts = false;
 			double MarchingCubeSize = 2.0;
 			int32 MaxOctreeDepth = 6;
-			double MinVoxelSize = 0.5;
-			
+			double MinVoxelSize = 0.5;			
 			bool bSmoothCutEdges = true;
-			double SmoothingStrength = 0.5;
+			int32 SmoothingIteration = 0;
+			double SmoothingStrength = 0.6;
     
 			// 增量更新选项
 			int32 UpdateMargin = 2;          // 更新边界扩展（体素单位）
@@ -70,7 +70,10 @@ namespace UE
     
 		private:
 			// 内部状态
-			bool bVoxelDataInitialized = false;		
+			bool bVoxelDataInitialized = false;
+
+			// 平滑模型
+			void SmoothGeneratedMesh(FDynamicMesh3& Mesh, int32 Iterations);
 
 		};
 	}

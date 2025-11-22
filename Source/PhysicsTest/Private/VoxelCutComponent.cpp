@@ -112,6 +112,7 @@ void UVoxelCutComponent::InitializeCutSystem()
     
 	// 设置基础参数
 	CutOp->bSmoothCutEdges = bSmoothEdges;
+	CutOp->SmoothingIteration = SmoothingIteration;
 	CutOp->SmoothingStrength = SmoothingStrength;
 	CutOp->bFillCutHole = bFillHoles;
 	CutOp->UpdateMargin = 5;

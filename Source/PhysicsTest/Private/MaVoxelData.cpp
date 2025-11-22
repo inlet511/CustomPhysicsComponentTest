@@ -148,27 +148,32 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
             FVector3d VoxelSizeLeaf = Node.Bounds.Extents() / (VoxelsPerSide - 1);
             Node.bIsEmpty = true;
             
-            for (int32 Z = 0; Z < VoxelsPerSide; Z++)
-            {
-                for (int32 Y = 0; Y < VoxelsPerSide; Y++)
-                {
-                    for (int32 X = 0; X < VoxelsPerSide; X++)
-                    {
-                        FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
-                        FVector3d WorldPos = Node.Bounds.Min + LocalPos;
-                        
-                        float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
-                        int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
-                        Node.Voxels[Index] = Distance;
-                        
-                        // 如果发现非空体素，标记节点为非空
-                        if (Distance < NodeSize.GetMax())
-                        {
-                            Node.bIsEmpty = false;
-                        }
-                    }
-                }
-            }
+        	std::atomic<bool> bNodeNonEmpty(false);  // 原子变量，用于线程安全地更新节点状态
+
+        	// 并行处理Z轴
+        	ParallelFor(VoxelsPerSide, [&](int32 Z)
+			{
+				for (int32 Y = 0; Y < VoxelsPerSide; Y++)
+				{
+					for (int32 X = 0; X < VoxelsPerSide; X++)
+					{
+						FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
+						FVector3d WorldPos = Node.Bounds.Min + LocalPos;
+            
+						float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
+						int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
+						Node.Voxels[Index] = Distance;
+            
+						// 检查节点是否变为非空
+						if (Distance < NodeSize.GetMax())
+						{
+							bNodeNonEmpty = true;  // 原子操作，线程安全
+						}
+					}
+				}
+			});
+
+        	Node.bIsEmpty = !bNodeNonEmpty;
         }
         else
         {

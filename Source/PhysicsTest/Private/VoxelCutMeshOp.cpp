@@ -138,6 +138,8 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
     return true;
 }
 
+
+
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
                                        const FTransform& ToolTransform, FProgressCancel* Progress)
 {
@@ -221,6 +223,9 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     MarchingCubes.IsoValue = 0.0f;
     
     ResultMesh->Copy(&MarchingCubes.Generate());
+
+    // 平滑模型
+    SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
     
     UE_LOG(LogTemp, Warning, TEXT("Generated mesh triangle count: %d"), ResultMesh->TriangleCount());
     
@@ -233,6 +238,52 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
         FTransform InverseTargetTransform = TargetTransform.Inverse();
         MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
     }
+}
+
+void FVoxelCutMeshOp::SmoothGeneratedMesh(FDynamicMesh3& Mesh, int32 Iterations)
+{
+    if (Mesh.VertexCount() == 0) return;
+    
+    for (int32 Iter = 0; Iter < Iterations; Iter++)
+    {
+        TArray<FVector3d> NewPositions;
+        NewPositions.SetNum(Mesh.MaxVertexID());
+        
+        // 对每个顶点应用拉普拉斯平滑
+        for (int32 VertexID : Mesh.VertexIndicesItr())
+        {
+            FVector3d CurrentPos = Mesh.GetVertex(VertexID);
+            FVector3d NeighborAverage = FVector3d::Zero();
+            int32 NeighborCount = 0;
+            
+            // 计算相邻顶点的平均位置
+            for (int32 NeighborID : Mesh.VtxVerticesItr(VertexID))
+            {
+                NeighborAverage += Mesh.GetVertex(NeighborID);
+                NeighborCount++;
+            }
+            
+            if (NeighborCount > 0)
+            {
+                NeighborAverage /= NeighborCount;
+                // 向相邻顶点平均位置移动
+                NewPositions[VertexID] = FMath::Lerp(CurrentPos, NeighborAverage, this->SmoothingStrength);
+            }
+            else
+            {
+                NewPositions[VertexID] = CurrentPos;
+            }
+        }
+        
+        // 应用新位置
+        for (int32 VertexID : Mesh.VertexIndicesItr())
+        {
+            Mesh.SetVertex(VertexID, NewPositions[VertexID]);
+        }
+    }
+    
+    // 重新计算法线
+    FMeshNormals::QuickComputeVertexNormals(Mesh);
 }
 
 UE_ENABLE_OPTIMIZATION
