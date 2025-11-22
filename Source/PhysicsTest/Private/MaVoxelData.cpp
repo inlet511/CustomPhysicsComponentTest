@@ -216,7 +216,7 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
             FVector3d LocalPos = Point - Node.Bounds.Min;
             FVector3d Size = Node.Bounds.Max - Node.Bounds.Min;
             
-            int32 VoxelsPerSide = FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Node.Voxels.Num())));
+            int32 VoxelsPerSide = FMath::RoundToInt(FMath::Pow(static_cast<float>(Node.Voxels.Num()),1.0f/3.0f));
             if (VoxelsPerSide <= 1) return 1.0f;
             
             FVector3d VoxelSizeLeaf = Size / (VoxelsPerSide - 1);
@@ -286,7 +286,7 @@ void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
             if (Node.bIsEmpty) return;
             
             // 更新叶子节点内的体素
-            int32 VoxelsPerSide = FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Node.Voxels.Num())));
+            int32 VoxelsPerSide = FMath::RoundToInt(FMath::Pow(static_cast<float>(Node.Voxels.Num()),1.0f/3.0f));
             if (VoxelsPerSide <= 1) return;
             
             FVector3d VoxelSizeLeaf = (Node.Bounds.Max - Node.Bounds.Min) / (VoxelsPerSide - 1);

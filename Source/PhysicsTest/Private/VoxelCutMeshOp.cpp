@@ -73,12 +73,7 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
     }
 
     // 体素化目标网格
-    double VoxelizeStart = FPlatformTime::Seconds();  // 开始时间（秒）
-    bool success = VoxelizeMesh(*TargetMesh, TargetTransform,*PersistentVoxelData, Progress);
-    double VoxelizeEnd = FPlatformTime::Seconds();
-    // 转换为毫秒（1秒 = 1000毫秒）
-    double VoxelizeTimeMs = (VoxelizeEnd - VoxelizeStart) * 1000.0;
-    UE_LOG(LogTemp, Warning, TEXT("VoxelizeMesh 耗时: %.2f 毫秒"), VoxelizeTimeMs);    
+    bool success = VoxelizeMesh(*TargetMesh, TargetTransform,*PersistentVoxelData, Progress); 
 
     bVoxelDataInitialized = true;    
     return success;
