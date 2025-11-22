@@ -162,7 +162,7 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
                         Node.Voxels[Index] = Distance;
                         
                         // 如果发现非空体素，标记节点为非空
-                        if (FMath::Abs(Distance) < NodeSize.GetMax() * 2.0)
+                        if (Distance < NodeSize.GetMax())
                         {
                             Node.bIsEmpty = false;
                         }

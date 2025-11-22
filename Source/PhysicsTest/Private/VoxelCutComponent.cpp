@@ -144,7 +144,7 @@ void UVoxelCutComponent::InitializeCutSystem()
 	bSystemInitialized = true;
 
 	//VisualizeOctreeNode();
-	PrintOctreeDetails();
+	//PrintOctreeDetails();
 }
 
 bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform)
