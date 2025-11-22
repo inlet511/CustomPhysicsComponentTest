@@ -143,7 +143,7 @@ void UVoxelCutComponent::InitializeCutSystem()
 
 	bSystemInitialized = true;
 
-	VisualizeOctreeNode();
+	//VisualizeOctreeNode();
 	PrintOctreeDetails();
 }
 

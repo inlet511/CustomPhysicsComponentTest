@@ -117,8 +117,8 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<
 
     double SignedDist =  FMathd::Sqrt(NearestDistSqr) * (bInSide? -1 : 1); 
 
-    UE_LOG(LogTemp, Warning, TEXT("最近距离平方: %f, 有符号距离: %f, 内部: %s"), 
-           NearestDistSqr, SignedDist, bInSide ? TEXT("是") : TEXT("否"));
+    // UE_LOG(LogTemp, Warning, TEXT("最近距离平方: %f, 有符号距离: %f, 内部: %s"), 
+    //        NearestDistSqr, SignedDist, bInSide ? TEXT("是") : TEXT("否"));
     
     return SignedDist;
 }

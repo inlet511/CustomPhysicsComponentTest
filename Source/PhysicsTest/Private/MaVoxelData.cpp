@@ -23,12 +23,49 @@ void FOctreeNode::Subdivide(double MinVoxelSize)
     
 	for (int32 i = 0; i < 8; i++)
 	{
-		FVector3d ChildMin = Bounds.Min;
-		FVector3d ChildMax = Center;
+		FVector3d ChildMin;
+		FVector3d ChildMax;
         
-		if (i & 1) ChildMin.X = Center.X; else ChildMax.X = Center.X;
-		if (i & 2) ChildMin.Y = Center.Y; else ChildMax.Y = Center.Y;
-		if (i & 4) ChildMin.Z = Center.Z; else ChildMax.Z = Center.Z;
+		if (i & 1)
+		{
+		    ChildMin.X = Center.X;
+		    ChildMax.X = Bounds.Max.X;
+		}	        
+	    else
+	    {
+	        ChildMin.X = Bounds.Min.X;
+	        ChildMax.X = Center.X;	        
+	    }
+		if (i & 2)
+		{
+		    ChildMin.Y = Center.Y;
+		    ChildMax.Y = Bounds.Max.Y;
+		}
+	    else
+	    {
+	        ChildMin.Y = Bounds.Min.Y;
+	        ChildMax.Y = Center.Y;
+	    }
+		if (i & 4)
+		{
+		    ChildMin.Z = Center.Z;
+		    ChildMax.Z = Bounds.Max.Z;
+		}
+	    else
+	    {
+	        ChildMin.Z = Bounds.Min.Z;
+	        ChildMax.Z = Center.Z;
+	    }
+
+	    // 添加边界验证
+	    if (ChildMin.X >= ChildMax.X || ChildMin.Y >= ChildMax.Y || ChildMin.Z >= ChildMax.Z)
+	    {
+	        UE_LOG(LogTemp, Error, TEXT("无效的子节点边界[%d]: Min(%s), Max(%s)"), 
+                   i, *ChildMin.ToString(), *ChildMax.ToString());
+	        // 使用安全的边界
+	        ChildMin = Bounds.Min;
+	        ChildMax = Bounds.Max;
+	    }
         
 		Children[i].Bounds = FAxisAlignedBox3d(ChildMin, ChildMax);
 		Children[i].Depth = Depth + 1;
@@ -121,7 +158,6 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
                         FVector3d WorldPos = Node.Bounds.Min + LocalPos;
                         
                         float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
-                        UE_LOG(LogTemp,Warning, TEXT("WorldPos:(%f,%f,%f), Point Distance:%f, NodeSize.GetMax()*2.0 = %f"), WorldPos.X, WorldPos.Y, WorldPos.Z, Distance, NodeSize.GetMax() * 2.0);
                         int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
                         Node.Voxels[Index] = Distance;
                         
