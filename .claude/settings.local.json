@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" branch -f master HEAD)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" checkout master)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" status)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" log --oneline -20)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" log --oneline --all -50)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" branch -a -v)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" log --oneline --graph master origin/master -15)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" push origin master --force)"
+    ]
+  }
+}
