@@ -8,7 +8,14 @@
       "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" log --oneline --all -50)",
       "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" branch -a -v)",
       "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" log --oneline --graph master origin/master -15)",
-      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" push origin master --force)"
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" push origin master --force)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" diff shadercode.txt)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" add shadercode.txt \"Plugins/SDFCut/Content/Materials/MPC_ToolShadow.uasset\")",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" commit -m \"$\\(cat <<''EOF''\n添加工具接触阴影功能\n\n- 添加基于线段的工具接触阴影计算\n- 使用Material Parameter Collection传递工具位置\n- 修复场景深度测试改为输入参数方式避免shader兼容性问题\n- 使用指数衰减实现柔和阴影效果\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" log --oneline -3)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" push origin master)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" add .)",
+      "Bash(git -C \"C:\\\\Dev\\\\CustomPhysicsComponentTest\" commit -m \"$\\(cat <<''EOF''\n更新材质和地图文件\n\n- 更新M_RayMarchingSolid材质配置\n- 更新Main地图\n- 添加ShaderCasterTest资产\n- 更新Claude Code本地设置\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }
