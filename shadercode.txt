@@ -33,15 +33,12 @@ float StartDistance = max(0.0, tBoxEntry);
 float3 CurrentWorldPos = WorldCameraPos + WorldSpaceRayDir * StartDistance;
 float CurrentDist = StartDistance;
 
+// 深度测试变量（SceneDepthInput 从材质输入获取）
 float3 ViewSpaceRayDir = mul(float4(WorldSpaceRayDir, 0.0), PrimaryView.TranslatedWorldToView).xyz;
 float DepthStep = ViewSpaceRayDir.z * StepSize;
-
 float3 TranslatedStartPos = CurrentWorldPos + LWCHackToFloat(PrimaryView.PreViewTranslation);
 float4 ViewStartPos = mul(float4(TranslatedStartPos, 1.0), PrimaryView.TranslatedWorldToView);
 float CurrentDepth = ViewStartPos.z;
-
-float2 ScreenUV = MaterialFloat2(ScreenAlignedPosition(Parameters.ScreenPosition).xy);
-float SceneDepthLinear = CalcSceneDepth(ScreenUV);
 
 float PrevSampledValue = 1.0; 
 float3 PrevWorldPos = CurrentWorldPos;
@@ -51,10 +48,11 @@ float SampledValue = 1.0;
 [loop]
 for (int i = 0; i < MaxSteps; i++) {
     [branch]
-    if (CurrentDist > tBoxExit) break; 
+    if (CurrentDist > tBoxExit) break;
 
+    // 深度测试：如果当前深度超过场景深度，停止渲染
     [branch]
-    if (CurrentDepth > SceneDepthLinear) return float4(0, 0, 0, 0); 
+    if (CurrentDepth > SceneDepthInput) return float4(0, 0, 0, 0);
 
     float3 LocalPos = mul(float4(CurrentWorldPos, 1.0), (WSDemote(GetWorldToLocal(Parameters)))).xyz;
     float3 UVW = (LocalPos - LocalBoundsMin) / LocalBoundsSize;
@@ -286,7 +284,47 @@ if (HitSurface) {
     }
 
     // ==========================================================
-    // --- 6. 统一光照计算 (使用 Mat_ 变量) ---
+    // --- 5b. 工具接触阴影 (Tool Contact Shadow) ---
+    // ==========================================================
+    // 输入参数: ToolPointA, ToolPointB (线段两端点，世界坐标)
+    // 输入参数: ToolShadowRadius (阴影影响半径)
+    // 输入参数: ToolShadowIntensity (阴影强度 0-1)
+    float ToolShadow = 1.0;
+    float DebugDist = 0.0; // 调试用
+    {
+        // 直接使用输入的工具点（假设与RefinedWorldPos在同一坐标系）
+        float3 ToolA = ToolPointA;
+        float3 ToolB = ToolPointB;
+
+        // 计算表面点到线段的最近距离
+        float3 AB = ToolB - ToolA;
+        float3 AP = RefinedWorldPos - ToolA;
+        float ABLengthSq = dot(AB, AB);
+
+        // 计算投影参数 t，限制在 [0,1] 范围内（线段上）
+        float t = saturate(dot(AP, AB) / max(ABLengthSq, 0.0001));
+
+        // 线段上的最近点
+        float3 closestPoint = ToolA + t * AB;
+
+        // 计算距离
+        float distToSegment = length(RefinedWorldPos - closestPoint);
+        DebugDist = distToSegment; // 保存调试值
+
+        // 柔和阴影衰减
+        float normalizedDist = distToSegment / max(ToolShadowRadius, 0.001);
+        float shadowFactor = 1.0 - exp(-normalizedDist * 2.0);
+        shadowFactor = saturate(shadowFactor);
+        shadowFactor = shadowFactor * shadowFactor;
+
+        ToolShadow = lerp(1.0 - ToolShadowIntensity, 1.0, shadowFactor);
+    }
+
+    // 调试：取消下面的注释可以直接输出距离值作为颜色
+    // return float4(DebugDist / 100.0, DebugDist / 100.0, DebugDist / 100.0, 1.0);
+
+    // 合并自阴影和工具接触阴影
+    ShadowAttenuation = min(ShadowAttenuation, ToolShadow);
     // ==========================================================
 
     float3 L = normalize(LightDir.xyz);
