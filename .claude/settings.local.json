@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\n添加DetailLevel细节级别控制和CPU顶点焊接\n\n主要改进：\n- 添加DetailLevel参数\\(1-8\\)控制网格细节级别，降低顶点数量\n- 实现CPU顶点焊接，解决碎片三角形问题\n- 添加初始三角化功能，启动时自动生成网格\n- 增加缓冲区大小限制和验证，防止内存溢出\n- 新增GPUMarchingCubes类用于3-pass算法（备用）\n\n技术细节：\n- Stride参数控制体素采样间隔，DetailLevel=2时顶点数约减少到1/8\n- 使用空间哈希表进行顶点焊接，合并重复顶点\n- 最大顶点数限制为5M，最大三角形数限制为2M\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}

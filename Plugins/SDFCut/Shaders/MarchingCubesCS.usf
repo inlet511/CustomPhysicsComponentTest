@@ -5,34 +5,22 @@
 
 
 Texture3D<float> DynamicSDF;
+SamplerState DynamicSDFSampler;  // 线性插值采样器
 RWStructuredBuffer<float3> OutVertices;
 RWStructuredBuffer<int3> OutTriangles;
 RWBuffer<int> VertexCounter;
 RWBuffer<int> TriangleCounter;
 
 
-
-
-// 采样动态SDF
-float SampleDynamicSDF(Texture3D<float> DynamicSDF, float3 WorldPos, float3 BoundsMin, float3 BoundsMax, int3 Dimensions)
+// 采样动态SDF - 使用三线性插值
+float SampleDynamicSDF(float3 WorldPos, float3 BoundsMin, float3 BoundsMax)
 {
+    // 计算归一化UV坐标 [0, 1]
     float3 UV = (WorldPos - BoundsMin) / (BoundsMax - BoundsMin);
-    int3 VoxelIndex = int3(saturate(UV) * Dimensions);
-    return DynamicSDF[VoxelIndex];
-}
+    UV = saturate(UV);
 
-// 计算体素8个角点的SDF值
-void SampleCubeSDF(Texture3D<float> DynamicSDF, float3 CubePos, float CubeSize,  float3 BoundsMin, float3 BoundsMax, int3 Dimensions, out float Values[8])
-{
-    float3 HalfSize = float3(CubeSize * 0.5f, CubeSize * 0.5f, CubeSize * 0.5f);
-    Values[0] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, -HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[1] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, -HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[2] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[3] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[4] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, -HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[5] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, -HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[6] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
-    Values[7] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    // 使用线性插值采样
+    return DynamicSDF.SampleLevel(DynamicSDFSampler, UV, 0);
 }
 
 // 计算边的交点
@@ -50,23 +38,45 @@ void MarchingCubesKernel(uint3 DispatchThreadId : SV_DispatchThreadID)
     int Stride = max(MCUB.Stride, 1);
     int3 CubeIndex = int3(DispatchThreadId.x, DispatchThreadId.y, DispatchThreadId.z) * Stride;
 
-    // 超出动态SDF范围，直接返回
-    if (CubeIndex.x >= MCUB.SDFDimensions.x - Stride ||
-        CubeIndex.y >= MCUB.SDFDimensions.y - Stride ||
-        CubeIndex.z >= MCUB.SDFDimensions.z - Stride)
+    // 体素数量是SDFDimensions-1（N个采样点之间有N-1个间隔）
+    int3 NumVoxels = MCUB.SDFDimensions - int3(1, 1, 1);
+
+    // 超出体素范围，直接返回
+    if (CubeIndex.x >= NumVoxels.x ||
+        CubeIndex.y >= NumVoxels.y ||
+        CubeIndex.z >= NumVoxels.z)
     {
         return;
     }
 
-    // 1. 计算当前立方体的中心位置（Step根据Stride调整）
-    float3 BaseStep = (MCUB.SDFBoundsMax - MCUB.SDFBoundsMin) / MCUB.SDFDimensions;
-    float3 Step = BaseStep * Stride;
-    float3 CubePos = MCUB.SDFBoundsMin + (CubeIndex + 0.5f * Stride) * BaseStep;
+    // 1. 计算当前立方体的位置
+    // 体素角点应该与SDF纹理的像素中心对齐
+    float3 VoxelSize = (MCUB.SDFBoundsMax - MCUB.SDFBoundsMin) / float3(NumVoxels);
+    float3 Step = VoxelSize * Stride;
 
-    // 2. 采样立方体8个角点的SDF值（使用调整后的CubeSize）
+    // 体素的8个角点位置（角点与SDF像素中心对齐）
+    float3 VoxelMin = MCUB.SDFBoundsMin + float3(CubeIndex) * VoxelSize;
+
+    // 2. 采样立方体8个角点的SDF值
+    // 角点位置直接对应SDF纹理的像素位置
     float SDFValues[8];
-    float AdjustedCubeSize = MCUB.CubeSize * Stride;
-    SampleCubeSDF(DynamicSDF, CubePos, AdjustedCubeSize, MCUB.SDFBoundsMin, MCUB.SDFBoundsMax, MCUB.SDFDimensions, SDFValues);
+    // 顶点0-7的位置偏移（相对于VoxelMin，范围0到1）
+    static const float3 CornerOffsets[8] = {
+        float3(0, 0, 0),  // 0
+        float3(1, 0, 0),  // 1
+        float3(1, 1, 0),  // 2
+        float3(0, 1, 0),  // 3
+        float3(0, 0, 1),  // 4
+        float3(1, 0, 1),  // 5
+        float3(1, 1, 1),  // 6
+        float3(0, 1, 1)   // 7
+    };
+
+    for (int v = 0; v < 8; v++)
+    {
+        float3 CornerPos = VoxelMin + CornerOffsets[v] * Step;
+        SDFValues[v] = SampleDynamicSDF(CornerPos, MCUB.SDFBoundsMin, MCUB.SDFBoundsMax);
+    }
 
     // 3. 计算立方体编码（判断每个角点是否在等值面内）
     int CubeCode = 0;
@@ -90,30 +100,23 @@ void MarchingCubesKernel(uint3 DispatchThreadId : SV_DispatchThreadID)
         {
             int A = EdgeIndices[i][0];
             int B = EdgeIndices[i][1];
-            float3 P0 = CubePos + float3(
-                (A & 1) ? Step.x * 0.5f : -Step.x * 0.5f,
-                (A & 2) ? Step.y * 0.5f : -Step.y * 0.5f,
-                (A & 4) ? Step.z * 0.5f : -Step.z * 0.5f
-            );
-            float3 P1 = CubePos + float3(
-                (B & 1) ? Step.x * 0.5f : -Step.x * 0.5f,
-                (B & 2) ? Step.y * 0.5f : -Step.y * 0.5f,
-                (B & 4) ? Step.z * 0.5f : -Step.z * 0.5f
-            );
+            // 使用CornerOffsets计算边端点位置
+            float3 P0 = VoxelMin + CornerOffsets[A] * Step;
+            float3 P1 = VoxelMin + CornerOffsets[B] * Step;
             EdgeVertices[i] = ComputeEdgeIntersection(P0, SDFValues[A], P1, SDFValues[B], MCUB.IsoValue);
-            
+
             // 原子操作分配顶点索引（避免并发冲突）
         	int originalVetexCount;
             InterlockedAdd(VertexCounter[0], 1 , originalVetexCount);
         	int VertexIndex = originalVetexCount;
             OutVertices[VertexIndex] = EdgeVertices[i];
-        	
+
         	EdgeVertexIndices[i] = VertexIndex;
         }else
         {
 	        EdgeVertexIndices[i] = -1;
         }
-    	
+
     }
 
     // 6. 生成三角形

@@ -137,14 +137,20 @@ void UGPUSDFCutter::InitGPUResources()
 	OriginalSDFRHIRef = OriginalSDFTexture->GetResource()->TextureRHI;
 	ToolSDFRHIRef = ToolSDFTexture->GetResource()->TextureRHI;
 
+	// 检查原始SDF纹理的格式
+	EPixelFormat OriginalFormat = OriginalSDFTexture->GetPixelFormat();
+	UE_LOG(LogTemp, Log, TEXT("Original SDF Texture Format: %s"), GetPixelFormatString(OriginalFormat));
+
 	SDFDimensions = FIntVector(
 		OriginalSDFTexture->GetSizeX(),
 		OriginalSDFTexture->GetSizeY(),
 		OriginalSDFTexture->GetSizeZ()
 	);
 
-	UE_LOG(LogTemp, Log, TEXT("GPUSDFCutter initialized: SDF Dimensions = %d x %d x %d"),
-		SDFDimensions.X, SDFDimensions.Y, SDFDimensions.Z);
+	// 计算实际的体素大小
+	FVector BoundsSize = TargetLocalBounds.GetSize();
+	FVector ActualVoxelSize = BoundsSize / FVector(SDFDimensions);
+
 
 	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI = OriginalSDFRHIRef](FRHICommandListImmediate& RHICmdList)
 		{
@@ -278,9 +284,10 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 
 			// ========== 2. 使用原来的单Pass Marching Cubes + CPU顶点焊接 ==========
 			{
-				// 全量生成：覆盖整个SDF体素范围
+				// 体素数量是SDFDimensions-1（N个采样点之间有N-1个间隔）
+				FIntVector NumVoxels = CapturedSDFDimensions - FIntVector(1, 1, 1);
 				FIntVector GenerateMin(0, 0, 0);
-				FIntVector GenerateMax = CapturedSDFDimensions - FIntVector(2, 2, 2);
+				FIntVector GenerateMax = NumVoxels - FIntVector(1, 1, 1);  // 最后一个体素的索引
 
 				// 使用更大的缓冲区大小估算
 				const int32 TotalVoxels = CapturedSDFDimensions.X * CapturedSDFDimensions.Y * CapturedSDFDimensions.Z;
@@ -318,6 +325,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 				auto* PassParams = GraphBuilder.AllocParameters<FLocalMarchingCubesCS::FParameters>();
 				PassParams->Params = GraphBuilder.CreateUniformBuffer(MCUBParams);
 				PassParams->DynamicSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(UpdatedSDFTexture));
+				PassParams->DynamicSDFSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 				PassParams->OutVertices = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(VertexBuffer, PF_R32G32B32F));
 				PassParams->OutTriangles = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(TriangleBuffer, PF_R8G8B8A8_UINT));
 				PassParams->VertexCounter = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(VertexCounter, PF_R32_SINT));
@@ -355,7 +363,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 				AddEnqueueCopyPass(GraphBuilder, VertexCounterReadback, VertexCounter, 0u);
 				AddEnqueueCopyPass(GraphBuilder, TriangleCounterReadback, TriangleCounter, 0u);
 
-				auto RunnerFunc = [VertexReadback, TriangleReadback, VertexCounterReadback, TriangleCounterReadback, AsyncCallback, MaxVertices, MaxTriangles](auto&& RunnerFunc)->void
+				auto RunnerFunc = [VertexReadback, TriangleReadback, VertexCounterReadback, TriangleCounterReadback, AsyncCallback, MaxVertices, MaxTriangles, CapturedVoxelSize, CapturedDetailLevel](auto&& RunnerFunc)->void
 					{
 						if (VertexReadback->IsReady() && TriangleReadback->IsReady() && VertexCounterReadback->IsReady() && TriangleCounterReadback->IsReady())
 						{
@@ -449,14 +457,20 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 
 							UE_LOG(LogTemp, Log, TEXT("MC Result: %d vertices, %d triangles"), VertexCount, TriangleCount);
 
-							// CPU顶点焊接
+							// 暂时跳过顶点焊接，直接使用原始数据
+							// TODO: 后续可以启用顶点焊接来优化顶点数量
+							/*
+							float WeldThreshold = CapturedVoxelSize * CapturedDetailLevel * 0.5f;
+							UE_LOG(LogTemp, Log, TEXT("Weld threshold: %f (VoxelSize=%f, DetailLevel=%d)"),
+								WeldThreshold, CapturedVoxelSize, CapturedDetailLevel);
 							TArray<FVector> WeldedVertices;
 							TArray<FIntVector> WeldedTriangles;
-							FGPUMarchingCubes::WeldVertices(Vertices, Triangles, WeldedVertices, WeldedTriangles, 0.01f);
+							FGPUMarchingCubes::WeldVertices(Vertices, Triangles, WeldedVertices, WeldedTriangles, WeldThreshold);
+							*/
 
 							// 发送到游戏线程
-							AsyncTask(ENamedThreads::GameThread, [AsyncCallback, WeldedTriangles = MoveTemp(WeldedTriangles), WeldedVertices = MoveTemp(WeldedVertices)]() mutable {
-								AsyncCallback(MoveTemp(WeldedVertices), MoveTemp(WeldedTriangles));
+							AsyncTask(ENamedThreads::GameThread, [AsyncCallback, Triangles = MoveTemp(Triangles), Vertices = MoveTemp(Vertices)]() mutable {
+								AsyncCallback(MoveTemp(Vertices), MoveTemp(Triangles));
 								});
 
 							delete TriangleCounterReadback;

@@ -312,17 +312,18 @@ void FGPUMarchingCubes::WeldVertices(
     VertexRemap.SetNum(InVertices.Num());
 
     // Quantization scale (inverse of threshold)
+    // 使用FloorToInt确保相同网格单元内的顶点被合并
     float InvThreshold = 1.0f / WeldThreshold;
 
     OutVertices.Reserve(InVertices.Num());
 
     for (int32 i = 0; i < InVertices.Num(); i++)
     {
-        // Quantize vertex position
+        // Quantize vertex position using Floor to avoid boundary issues
         FIntVector QuantizedPos(
-            FMath::RoundToInt(InVertices[i].X * InvThreshold),
-            FMath::RoundToInt(InVertices[i].Y * InvThreshold),
-            FMath::RoundToInt(InVertices[i].Z * InvThreshold));
+            FMath::FloorToInt(InVertices[i].X * InvThreshold),
+            FMath::FloorToInt(InVertices[i].Y * InvThreshold),
+            FMath::FloorToInt(InVertices[i].Z * InvThreshold));
 
         // Check if vertex already exists
         int32* ExistingIndex = VertexMap.Find(QuantizedPos);

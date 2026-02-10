@@ -31,6 +31,7 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FMCUB, Params)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, DynamicSDF)
+		SHADER_PARAMETER_SAMPLER(SamplerState, DynamicSDFSampler)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, OutVertices)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FIntVector>, OutTriangles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<int>, VertexCounter)
