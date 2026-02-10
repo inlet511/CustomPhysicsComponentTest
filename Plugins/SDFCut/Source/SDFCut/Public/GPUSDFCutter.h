@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "DynamicMeshActor.h"
 #include "Components/SceneComponent.h"
+#include "GPUMarchingCubes.h"
 #include "GPUSDFCutter.generated.h"
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FOnMeshGenerated, UDynamicMeshComponent*, Component);
@@ -51,6 +52,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
 	ADynamicMeshActor* CutToolActor = nullptr;
 
+	// 细节级别：1=最高细节，2=中等，4=低细节（步长）
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 DetailLevel = 1;
+
 	// 网格生成完成回调
 	FOnMeshGenerated OnMeshGenerated;
 
@@ -82,6 +87,7 @@ private:
 	FTransform CurrentToolTransform;
 	bool bToolTransformDirty = false;
 	bool bGPUResourcesInitialized = false;
+	bool bNeedInitialTriangulation = false;  // 是否需要初始三角化
 
 	// SDF参数
 	FBox TargetLocalBounds; // 物体原始边界
@@ -108,6 +114,5 @@ private:
 	TArray<FIntVector> MeshTriangles[2];
 	int32 CurrentMeshBuffer = 0;
 	bool bHasPendingMeshData = false;
-
 
 };

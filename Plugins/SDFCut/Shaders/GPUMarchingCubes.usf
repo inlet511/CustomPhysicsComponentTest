@@ -1,0 +1,276 @@
+// 3-Pass GPU Marching Cubes Shader
+// Pass 1: Classification - Classify cells and count vertices
+// Pass 2: Prefix Sum - Compute vertex offsets
+// Pass 3: Generate - Generate vertices and triangles
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "MarchingCubesConsts.ush"
+
+// Vertex count lookup table for each case (0-255)
+static const int VertexCountTable[256] = {
+    0, 3, 3, 6, 3, 6, 6, 9, 3, 6, 6, 9, 6, 9, 9, 6,
+    3, 6, 6, 9, 6, 9, 9, 12, 6, 9, 9, 12, 9, 12, 12, 9,
+    3, 6, 6, 9, 6, 9, 9, 12, 6, 9, 9, 12, 9, 12, 12, 9,
+    6, 9, 9, 6, 9, 12, 12, 9, 9, 12, 12, 9, 12, 15, 15, 6,
+    3, 6, 6, 9, 6, 9, 9, 12, 6, 9, 9, 12, 9, 12, 12, 9,
+    6, 9, 9, 12, 9, 12, 12, 15, 9, 12, 12, 15, 12, 15, 15, 12,
+    6, 9, 9, 12, 9, 12, 6, 9, 9, 12, 12, 15, 12, 15, 9, 6,
+    9, 12, 12, 9, 12, 15, 9, 6, 12, 15, 15, 12, 15, 6, 12, 3,
+    3, 6, 6, 9, 6, 9, 9, 12, 6, 9, 9, 12, 9, 12, 12, 9,
+    6, 9, 9, 12, 9, 12, 12, 15, 9, 6, 12, 9, 12, 9, 15, 6,
+    6, 9, 9, 12, 9, 12, 12, 15, 9, 12, 12, 15, 12, 15, 15, 12,
+    9, 12, 12, 9, 12, 15, 15, 12, 12, 9, 15, 6, 15, 12, 6, 3,
+    6, 9, 9, 12, 9, 12, 12, 15, 9, 12, 12, 15, 6, 9, 9, 6,
+    9, 12, 12, 15, 12, 15, 15, 6, 12, 9, 15, 12, 9, 6, 12, 3,
+    9, 12, 12, 15, 12, 15, 9, 12, 12, 15, 15, 6, 9, 12, 6, 3,
+    6, 9, 9, 6, 9, 12, 6, 3, 9, 6, 12, 3, 6, 3, 3, 0
+};
+
+// ============================================================================
+// Pass 1: Classification
+// ============================================================================
+
+Texture3D<float> ClassifySDF;
+RWStructuredBuffer<uint> CellCaseBuffer;      // Case index for each cell
+RWStructuredBuffer<uint> CellVertCountBuffer; // Vertex count for each cell
+
+[numthreads(8, 8, 8)]
+void ClassifyCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    int3 CellIndex = int3(DispatchThreadId);
+
+    // Check bounds
+    if (CellIndex.x >= MCUB.SDFDimensions.x - 1 ||
+        CellIndex.y >= MCUB.SDFDimensions.y - 1 ||
+        CellIndex.z >= MCUB.SDFDimensions.z - 1)
+    {
+        return;
+    }
+
+    // Calculate linear cell index
+    int LinearIndex = CellIndex.x +
+                      CellIndex.y * (MCUB.SDFDimensions.x - 1) +
+                      CellIndex.z * (MCUB.SDFDimensions.x - 1) * (MCUB.SDFDimensions.y - 1);
+
+    // Sample 8 corner SDF values
+    float SDFValues[8];
+    SDFValues[0] = ClassifySDF[CellIndex + int3(0, 0, 0)];
+    SDFValues[1] = ClassifySDF[CellIndex + int3(1, 0, 0)];
+    SDFValues[2] = ClassifySDF[CellIndex + int3(1, 1, 0)];
+    SDFValues[3] = ClassifySDF[CellIndex + int3(0, 1, 0)];
+    SDFValues[4] = ClassifySDF[CellIndex + int3(0, 0, 1)];
+    SDFValues[5] = ClassifySDF[CellIndex + int3(1, 0, 1)];
+    SDFValues[6] = ClassifySDF[CellIndex + int3(1, 1, 1)];
+    SDFValues[7] = ClassifySDF[CellIndex + int3(0, 1, 1)];
+
+    // Calculate case index
+    int CaseIndex = 0;
+    for (int i = 0; i < 8; i++)
+    {
+        if (SDFValues[i] < MCUB.IsoValue)
+        {
+            CaseIndex |= (1 << i);
+        }
+    }
+
+    // Store case and vertex count
+    CellCaseBuffer[LinearIndex] = CaseIndex;
+    CellVertCountBuffer[LinearIndex] = VertexCountTable[CaseIndex];
+}
+
+// ============================================================================
+// Pass 2: Prefix Sum (Blelloch Scan)
+// ============================================================================
+
+RWStructuredBuffer<uint> PrefixSumBuffer;
+groupshared uint SharedData[1024];
+
+[numthreads(512, 1, 1)]
+void PrefixSumCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID, uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint tid = GroupThreadId.x;
+    uint gid = GroupId.x;
+    uint blockSize = 1024;
+    uint baseIndex = gid * blockSize;
+
+    // Load data into shared memory
+    uint ai = tid;
+    uint bi = tid + 512;
+    SharedData[ai] = PrefixSumBuffer[baseIndex + ai];
+    SharedData[bi] = PrefixSumBuffer[baseIndex + bi];
+
+    // Up-sweep (reduce) phase
+    uint offset = 1;
+    for (uint d = blockSize >> 1; d > 0; d >>= 1)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        if (tid < d)
+        {
+            uint ai2 = offset * (2 * tid + 1) - 1;
+            uint bi2 = offset * (2 * tid + 2) - 1;
+            SharedData[bi2] += SharedData[ai2];
+        }
+        offset *= 2;
+    }
+
+    // Clear the last element
+    if (tid == 0)
+    {
+        SharedData[blockSize - 1] = 0;
+    }
+
+    // Down-sweep phase
+    for (uint d2 = 1; d2 < blockSize; d2 *= 2)
+    {
+        offset >>= 1;
+        GroupMemoryBarrierWithGroupSync();
+        if (tid < d2)
+        {
+            uint ai3 = offset * (2 * tid + 1) - 1;
+            uint bi3 = offset * (2 * tid + 2) - 1;
+            uint t = SharedData[ai3];
+            SharedData[ai3] = SharedData[bi3];
+            SharedData[bi3] += t;
+        }
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    // Write results back
+    PrefixSumBuffer[baseIndex + ai] = SharedData[ai];
+    PrefixSumBuffer[baseIndex + bi] = SharedData[bi];
+}
+
+// ============================================================================
+// Pass 3: Generate Vertices and Triangles
+// ============================================================================
+
+Texture3D<float> GenerateSDF;
+StructuredBuffer<uint> CellCaseBufferRead;
+StructuredBuffer<uint> CellOffsetBuffer;
+RWStructuredBuffer<float3> OutVertices;
+RWStructuredBuffer<float3> OutNormals;
+RWStructuredBuffer<int3> OutTriangles;
+RWBuffer<int> TotalTriangleCount;
+
+// Compute gradient (normal) using central differences
+float3 ComputeGradient(Texture3D<float> SDF, int3 VoxelIndex, float3 Step)
+{
+    float3 Gradient;
+    Gradient.x = SDF[VoxelIndex + int3(1, 0, 0)] - SDF[VoxelIndex + int3(-1, 0, 0)];
+    Gradient.y = SDF[VoxelIndex + int3(0, 1, 0)] - SDF[VoxelIndex + int3(0, -1, 0)];
+    Gradient.z = SDF[VoxelIndex + int3(0, 0, 1)] - SDF[VoxelIndex + int3(0, 0, -1)];
+    return normalize(Gradient);
+}
+
+// Compute edge intersection with interpolation
+float3 ComputeEdgeVertex(float3 P0, float V0, float3 P1, float V1, float IsoValue)
+{
+    if (abs(V0 - V1) < 0.0001f)
+        return (P0 + P1) * 0.5f;
+    float t = saturate((IsoValue - V0) / (V1 - V0));
+    return lerp(P0, P1, t);
+}
+
+[numthreads(8, 8, 8)]
+void GenerateCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    int3 CellIndex = int3(DispatchThreadId);
+
+    // Check bounds
+    if (CellIndex.x >= MCUB.SDFDimensions.x - 1 ||
+        CellIndex.y >= MCUB.SDFDimensions.y - 1 ||
+        CellIndex.z >= MCUB.SDFDimensions.z - 1)
+    {
+        return;
+    }
+
+    // Calculate linear cell index
+    int LinearIndex = CellIndex.x +
+                      CellIndex.y * (MCUB.SDFDimensions.x - 1) +
+                      CellIndex.z * (MCUB.SDFDimensions.x - 1) * (MCUB.SDFDimensions.y - 1);
+
+    // Get case index
+    uint CaseIndex = CellCaseBufferRead[LinearIndex];
+    if (EdgeTable[CaseIndex] == 0)
+        return;
+
+    // Get vertex offset for this cell
+    uint VertexOffset = CellOffsetBuffer[LinearIndex];
+
+    // Calculate cell position in world space
+    float3 Step = (MCUB.SDFBoundsMax - MCUB.SDFBoundsMin) / float3(MCUB.SDFDimensions);
+    float3 CellPos = MCUB.SDFBoundsMin + float3(CellIndex) * Step;
+
+    // Sample 8 corner SDF values
+    float SDFValues[8];
+    SDFValues[0] = GenerateSDF[CellIndex + int3(0, 0, 0)];
+    SDFValues[1] = GenerateSDF[CellIndex + int3(1, 0, 0)];
+    SDFValues[2] = GenerateSDF[CellIndex + int3(1, 1, 0)];
+    SDFValues[3] = GenerateSDF[CellIndex + int3(0, 1, 0)];
+    SDFValues[4] = GenerateSDF[CellIndex + int3(0, 0, 1)];
+    SDFValues[5] = GenerateSDF[CellIndex + int3(1, 0, 1)];
+    SDFValues[6] = GenerateSDF[CellIndex + int3(1, 1, 1)];
+    SDFValues[7] = GenerateSDF[CellIndex + int3(0, 1, 1)];
+
+    // Corner positions
+    float3 CornerPos[8];
+    CornerPos[0] = CellPos + float3(0, 0, 0);
+    CornerPos[1] = CellPos + float3(Step.x, 0, 0);
+    CornerPos[2] = CellPos + float3(Step.x, Step.y, 0);
+    CornerPos[3] = CellPos + float3(0, Step.y, 0);
+    CornerPos[4] = CellPos + float3(0, 0, Step.z);
+    CornerPos[5] = CellPos + float3(Step.x, 0, Step.z);
+    CornerPos[6] = CellPos + float3(Step.x, Step.y, Step.z);
+    CornerPos[7] = CellPos + float3(0, Step.y, Step.z);
+
+    // Compute edge vertices
+    float3 EdgeVertices[12];
+    for (int i = 0; i < 12; i++)
+    {
+        if (EdgeTable[CaseIndex] & (1 << i))
+        {
+            int A = EdgeIndices[i][0];
+            int B = EdgeIndices[i][1];
+            EdgeVertices[i] = ComputeEdgeVertex(
+                CornerPos[A], SDFValues[A],
+                CornerPos[B], SDFValues[B],
+                MCUB.IsoValue);
+        }
+    }
+
+    // Generate triangles
+    uint LocalVertIndex = 0;
+    for (int t = 0; TriTable[CaseIndex][t] != -1; t += 3)
+    {
+        int Idx0 = TriTable[CaseIndex][t];
+        int Idx1 = TriTable[CaseIndex][t + 1];
+        int Idx2 = TriTable[CaseIndex][t + 2];
+
+        // Write vertices
+        uint V0 = VertexOffset + LocalVertIndex;
+        uint V1 = VertexOffset + LocalVertIndex + 1;
+        uint V2 = VertexOffset + LocalVertIndex + 2;
+
+        OutVertices[V0] = EdgeVertices[Idx0];
+        OutVertices[V1] = EdgeVertices[Idx1];
+        OutVertices[V2] = EdgeVertices[Idx2];
+
+        // Compute face normal
+        float3 Edge1 = EdgeVertices[Idx1] - EdgeVertices[Idx0];
+        float3 Edge2 = EdgeVertices[Idx2] - EdgeVertices[Idx0];
+        float3 FaceNormal = normalize(cross(Edge1, Edge2));
+
+        OutNormals[V0] = FaceNormal;
+        OutNormals[V1] = FaceNormal;
+        OutNormals[V2] = FaceNormal;
+
+        // Write triangle indices
+        int TriIndex;
+        InterlockedAdd(TotalTriangleCount[0], 1, TriIndex);
+        OutTriangles[TriIndex] = int3(V0, V1, V2);
+
+        LocalVertIndex += 3;
+    }
+}

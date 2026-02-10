@@ -12,10 +12,13 @@ BEGIN_UNIFORM_BUFFER_STRUCT(FMCUB, )
 	SHADER_PARAMETER(FIntVector, SDFDimensions)
 	SHADER_PARAMETER(float, CubeSize)
 	SHADER_PARAMETER(float, IsoValue)
-    
+
 	// 生成区域（只生成变化区域的网格）
 	SHADER_PARAMETER(FIntVector, GenerateRegionMin)
 	SHADER_PARAMETER(FIntVector, GenerateRegionMax)
+
+	// 细节级别步长（1=最高细节，2=中等，4=低细节）
+	SHADER_PARAMETER(int32, Stride)
 END_UNIFORM_BUFFER_STRUCT()
 
 

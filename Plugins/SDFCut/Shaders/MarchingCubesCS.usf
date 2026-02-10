@@ -46,23 +46,27 @@ float3 ComputeEdgeIntersection(float3 p0, float f0, float3 p1, float f1, float I
 [numthreads(8, 8, 8)]
 void MarchingCubesKernel(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-    int3 CubeIndex = int3(DispatchThreadId.x, DispatchThreadId.y, DispatchThreadId.z);
-    
+    // 使用Stride跳过体素以降低细节级别
+    int Stride = max(MCUB.Stride, 1);
+    int3 CubeIndex = int3(DispatchThreadId.x, DispatchThreadId.y, DispatchThreadId.z) * Stride;
+
     // 超出动态SDF范围，直接返回
-    if (CubeIndex.x >= MCUB.SDFDimensions.x - 1 || 
-        CubeIndex.y >= MCUB.SDFDimensions.y - 1 || 
-        CubeIndex.z >= MCUB.SDFDimensions.z - 1)
+    if (CubeIndex.x >= MCUB.SDFDimensions.x - Stride ||
+        CubeIndex.y >= MCUB.SDFDimensions.y - Stride ||
+        CubeIndex.z >= MCUB.SDFDimensions.z - Stride)
     {
         return;
     }
 
-    // 1. 计算当前立方体的中心位置
-    float3 Step = (MCUB.SDFBoundsMax - MCUB.SDFBoundsMin) / MCUB.SDFDimensions;
-    float3 CubePos = MCUB.SDFBoundsMin + (CubeIndex + 0.5f) * Step;
+    // 1. 计算当前立方体的中心位置（Step根据Stride调整）
+    float3 BaseStep = (MCUB.SDFBoundsMax - MCUB.SDFBoundsMin) / MCUB.SDFDimensions;
+    float3 Step = BaseStep * Stride;
+    float3 CubePos = MCUB.SDFBoundsMin + (CubeIndex + 0.5f * Stride) * BaseStep;
 
-    // 2. 采样立方体8个角点的SDF值
+    // 2. 采样立方体8个角点的SDF值（使用调整后的CubeSize）
     float SDFValues[8];
-    SampleCubeSDF(DynamicSDF, CubePos, MCUB.CubeSize, MCUB.SDFBoundsMin, MCUB.SDFBoundsMax, MCUB.SDFDimensions, SDFValues);
+    float AdjustedCubeSize = MCUB.CubeSize * Stride;
+    SampleCubeSDF(DynamicSDF, CubePos, AdjustedCubeSize, MCUB.SDFBoundsMin, MCUB.SDFBoundsMax, MCUB.SDFDimensions, SDFValues);
 
     // 3. 计算立方体编码（判断每个角点是否在等值面内）
     int CubeCode = 0;

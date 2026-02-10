@@ -10,6 +10,8 @@
 #include "RenderGraphUtils.h"
 #include "UpdateSDFShader.h"
 #include "MarchingCubesShader.h"
+#include "GPUMarchingCubesShader.h"
+#include "GPUMarchingCubes.h"
 #include "DynamicMesh/MeshNormals.h"
 
 UE_DISABLE_OPTIMIZATION
@@ -56,8 +58,17 @@ void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorCo
 	if (!bGPUResourcesInitialized || !TargetMeshActor)
 		return;
 
+	// 初始三角化：在GPU资源初始化完成后的第一帧执行
+	if (bNeedInitialTriangulation && !bHasPendingMeshData)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Performing initial triangulation..."));
+		DispatchLocalUpdate([this](const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles) {
+			this->ReadbackMeshData(Vertices, Triangles);
+			});
+		bNeedInitialTriangulation = false;
+	}
 	// 只有工具位置变化,并且数据已经处理完成才发送新请求
-	if (bToolTransformDirty && !bHasPendingMeshData)
+	else if (bToolTransformDirty && !bHasPendingMeshData)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Transform Updated, Dispatching Work"));
 		DispatchLocalUpdate([this](const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles) {
@@ -132,6 +143,9 @@ void UGPUSDFCutter::InitGPUResources()
 		OriginalSDFTexture->GetSizeZ()
 	);
 
+	UE_LOG(LogTemp, Log, TEXT("GPUSDFCutter initialized: SDF Dimensions = %d x %d x %d"),
+		SDFDimensions.X, SDFDimensions.Y, SDFDimensions.Z);
+
 	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI = OriginalSDFRHIRef](FRHICommandListImmediate& RHICmdList)
 		{
 
@@ -158,6 +172,7 @@ void UGPUSDFCutter::InitGPUResources()
 			GraphBuilder.Execute();
 
 			bGPUResourcesInitialized = true;
+			bNeedInitialTriangulation = true;  // 标记需要初始三角化
 
 		});
 
@@ -218,7 +233,15 @@ void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransfo
 
 void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)> AsyncCallback)
 {
-	ENQUEUE_RENDER_COMMAND(GPUSDFCutter_LocalUpdate)([this, AsyncCallback](FRHICommandListImmediate& RHICmdList)
+	// Capture necessary data for render thread
+	FVector3f BoundsMin = FVector3f(TargetLocalBounds.Min);
+	FVector3f BoundsMax = FVector3f(TargetLocalBounds.Max);
+	FIntVector CapturedSDFDimensions = SDFDimensions;
+	float CapturedVoxelSize = VoxelSize;
+	int32 CapturedDetailLevel = FMath::Clamp(DetailLevel, 1, 8);
+
+	ENQUEUE_RENDER_COMMAND(GPUSDFCutter_LocalUpdate)([this, AsyncCallback, BoundsMin, BoundsMax,
+		CapturedSDFDimensions, CapturedVoxelSize, CapturedDetailLevel](FRHICommandListImmediate& RHICmdList)
 		{
 			FRDGBuilder GraphBuilder(RHICmdList);
 
@@ -242,7 +265,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 			{
 				// 创建临时纹理用于更新结果
 				FRDGTextureDesc TempSDFDesc = FRDGTextureDesc::Create3D(
-					SDFDimensions, PF_R32_FLOAT, FClearValueBinding::None,
+					CapturedSDFDimensions, PF_R32_FLOAT, FClearValueBinding::None,
 					TexCreate_ShaderResource | TexCreate_UAV);
 
 				UpdatedSDFTexture = GraphBuilder.CreateTexture(TempSDFDesc, TEXT("TempSDF"));
@@ -250,76 +273,47 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 				// 首先复制当前动态SDF到临时纹理
 				AddCopyTexturePass(GraphBuilder, DynamicSDFTexture, UpdatedSDFTexture);
 
-				/*
-							auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();
-							CutUBParams->ObjectLocalBoundsMin = FVector3f(TargetLocalBounds.Min);
-							CutUBParams->ObjectLocalBoundsMax = FVector3f(TargetLocalBounds.Max);
-							CutUBParams->ToolLocalBoundsMin = FVector3f(ToolLocalBounds.Min);
-							CutUBParams->ToolLocalBoundsMax = FVector3f(ToolLocalBounds.Max);
-							CutUBParams->ObjectToToolTransform = FMatrix44f(CurrentObjectTransform.ToMatrixWithScale());
-							CutUBParams->ToolToObjectTransform = FMatrix44f(CurrentObjectTransform.Inverse().ToMatrixWithScale());
-							CutUBParams->SDFDimensions = SDFDimensions;
-							CutUBParams->VoxelSize = VoxelSize;
-							CutUBParams->IsoValue = 0.0f;
-							CutUBParams->UpdateRegionMin = UpdateMin;
-							CutUBParams->UpdateRegionMax = UpdateMax;
-
-							auto* PassParams = GraphBuilder.AllocParameters<FUpdateSDFCS::FParameters>();
-							PassParams->Params = GraphBuilder.CreateUniformBuffer(CutUBParams);
-							PassParams->OriginalSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(OriginalTexture));
-							PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
-							PassParams->DynamicSDF = GraphBuilder.CreateUAV(UpdatedSDFTexture);
-							PassParams->OriginalSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-							PassParams->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-
-							// 只调度更新区域
-							FIntVector RegionSize = UpdateMax - UpdateMin + FIntVector(1);
-							FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(RegionSize, FIntVector(4, 4, 4));
-
-							TShaderMapRef<FUpdateSDFCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-							FComputeShaderUtils::AddPass(
-								GraphBuilder,
-								RDG_EVENT_NAME("LocalSDFUpdate"),
-								ComputeShader,
-								PassParams,
-								GroupCount
-							);*/
+				// TODO: Enable SDF update when ready
 			}
 
-			// ========== 2. 全量Marching Cubes（遍历整个SDF） ==========
+			// ========== 2. 使用原来的单Pass Marching Cubes + CPU顶点焊接 ==========
 			{
-				// 全量生成：覆盖整个SDF体素范围（不再依赖工具影响区）
+				// 全量生成：覆盖整个SDF体素范围
 				FIntVector GenerateMin(0, 0, 0);
-				FIntVector GenerateMax = SDFDimensions - FIntVector(2, 2, 2); // 避免体素越界
+				FIntVector GenerateMax = CapturedSDFDimensions - FIntVector(2, 2, 2);
 
-				// 全量MC需扩容缓冲区（按总体现素估算最大顶点/三角形数）
-				const int32 TotalVoxels = SDFDimensions.X * SDFDimensions.Y * SDFDimensions.Z;
-				const int32 MaxVertices = TotalVoxels * 5;  // 每个体素最多5个顶点
-				const int32 MaxTriangles = TotalVoxels * 2; // 每个体素最多2个三角形
+				// 使用更大的缓冲区大小估算
+				const int32 TotalVoxels = CapturedSDFDimensions.X * CapturedSDFDimensions.Y * CapturedSDFDimensions.Z;
+				const int32 EstimatedSurfaceVoxels = FMath::Max(TotalVoxels / 10, 1000);  // 10% of voxels
+				const int32 MaxVertices = FMath::Min(EstimatedSurfaceVoxels * 15, 5000000);  // Cap at 5M vertices
+				const int32 MaxTriangles = FMath::Min(EstimatedSurfaceVoxels * 5, 2000000);  // Cap at 2M triangles
 
-				// 创建全量缓冲区
+				UE_LOG(LogTemp, Log, TEXT("MC Buffer sizes: MaxVertices=%d, MaxTriangles=%d"), MaxVertices, MaxTriangles);
+
+				// 创建缓冲区
 				FRDGBufferRef VertexBuffer = GraphBuilder.CreateBuffer(
-					FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), MaxVertices), TEXT("FullMCVertices"));
+					FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), MaxVertices), TEXT("MCVertices"));
 				FRDGBufferRef TriangleBuffer = GraphBuilder.CreateBuffer(
-					FRDGBufferDesc::CreateStructuredDesc(sizeof(FIntVector), MaxTriangles), TEXT("FullMCTriangles"));
+					FRDGBufferDesc::CreateStructuredDesc(sizeof(FIntVector), MaxTriangles), TEXT("MCTriangles"));
 				FRDGBufferRef VertexCounter = GraphBuilder.CreateBuffer(
-					FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1), TEXT("FullMCVertexCounter"));
+					FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1), TEXT("MCVertexCounter"));
 				FRDGBufferRef TriangleCounter = GraphBuilder.CreateBuffer(
-					FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1), TEXT("FullMCTriangleCounter"));
+					FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1), TEXT("MCTriangleCounter"));
 
 				// 清空计数器
 				AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(VertexCounter, PF_R32_SINT), 0);
 				AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(TriangleCounter, PF_R32_SINT), 0);
 
-				// MC参数：生成区域设为全量
+				// MC参数
 				auto* MCUBParams = GraphBuilder.AllocParameters<FMCUB>();
-				MCUBParams->SDFBoundsMin = FVector3f(TargetLocalBounds.Min);
-				MCUBParams->SDFBoundsMax = FVector3f(TargetLocalBounds.Max);
-				MCUBParams->SDFDimensions = SDFDimensions;
+				MCUBParams->SDFBoundsMin = BoundsMin;
+				MCUBParams->SDFBoundsMax = BoundsMax;
+				MCUBParams->SDFDimensions = CapturedSDFDimensions;
 				MCUBParams->IsoValue = 0.0f;
-				MCUBParams->CubeSize = VoxelSize;
-				MCUBParams->GenerateRegionMin = GenerateMin; // 全量：从(0,0,0)开始
-				MCUBParams->GenerateRegionMax = GenerateMax; // 全量：覆盖整个SDF
+				MCUBParams->CubeSize = CapturedVoxelSize;
+				MCUBParams->GenerateRegionMin = GenerateMin;
+				MCUBParams->GenerateRegionMax = GenerateMax;
+				MCUBParams->Stride = CapturedDetailLevel;
 
 				auto* PassParams = GraphBuilder.AllocParameters<FLocalMarchingCubesCS::FParameters>();
 				PassParams->Params = GraphBuilder.CreateUniformBuffer(MCUBParams);
@@ -329,14 +323,19 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 				PassParams->VertexCounter = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(VertexCounter, PF_R32_SINT));
 				PassParams->TriangleCounter = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(TriangleCounter, PF_R32_SINT));
 
-				// 全量MC的线程调度（按整个SDF范围计算）
+				// 线程调度（根据Stride调整线程数量）
 				FIntVector MCRegionSize = GenerateMax - GenerateMin + FIntVector(1);
-				FIntVector MCGroupCount = FComputeShaderUtils::GetGroupCount(MCRegionSize, FIntVector(4, 4, 4));
+				FIntVector AdjustedRegionSize = FIntVector(
+					FMath::DivideAndRoundUp(MCRegionSize.X, CapturedDetailLevel),
+					FMath::DivideAndRoundUp(MCRegionSize.Y, CapturedDetailLevel),
+					FMath::DivideAndRoundUp(MCRegionSize.Z, CapturedDetailLevel)
+				);
+				FIntVector MCGroupCount = FComputeShaderUtils::GetGroupCount(AdjustedRegionSize, FIntVector(8, 8, 8));
 
 				TShaderMapRef<FLocalMarchingCubesCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
 				FComputeShaderUtils::AddPass(
 					GraphBuilder,
-					RDG_EVENT_NAME("FullMarchingCubes"),
+					RDG_EVENT_NAME("MarchingCubes"),
 					ComputeShader,
 					PassParams,
 					MCGroupCount
@@ -345,19 +344,18 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 				// 将更新后的SDF复制回持久化纹理
 				AddCopyTexturePass(GraphBuilder, UpdatedSDFTexture, DynamicSDFTexture);
 
-
+				// 设置回读
 				FRHIGPUBufferReadback* VertexReadback = new FRHIGPUBufferReadback(TEXT("VerticesReadback"));
 				FRHIGPUBufferReadback* TriangleReadback = new FRHIGPUBufferReadback(TEXT("TrianglesReadback"));
 				FRHIGPUBufferReadback* VertexCounterReadback = new FRHIGPUBufferReadback(TEXT("VertexCounterReadback"));
 				FRHIGPUBufferReadback* TriangleCounterReadback = new FRHIGPUBufferReadback(TEXT("TriangleCounterReadback"));
 
-				// 5. 添加拷贝Pass：将RDG缓冲区数据拷贝到回读对象（AddEnqueueCopyPass）
 				AddEnqueueCopyPass(GraphBuilder, VertexReadback, VertexBuffer, 0u);
 				AddEnqueueCopyPass(GraphBuilder, TriangleReadback, TriangleBuffer, 0u);
 				AddEnqueueCopyPass(GraphBuilder, VertexCounterReadback, VertexCounter, 0u);
 				AddEnqueueCopyPass(GraphBuilder, TriangleCounterReadback, TriangleCounter, 0u);
 
-				auto RunnerFunc = [VertexReadback, TriangleReadback, VertexCounterReadback, TriangleCounterReadback, AsyncCallback](auto&& RunnerFunc)->void
+				auto RunnerFunc = [VertexReadback, TriangleReadback, VertexCounterReadback, TriangleCounterReadback, AsyncCallback, MaxVertices, MaxTriangles](auto&& RunnerFunc)->void
 					{
 						if (VertexReadback->IsReady() && TriangleReadback->IsReady() && VertexCounterReadback->IsReady() && TriangleCounterReadback->IsReady())
 						{
@@ -370,27 +368,43 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 							}
 							VertexCounterReadback->Unlock();
 
+							// 验证顶点数量
+							if (VertexCount <= 0 || VertexCount > MaxVertices)
+							{
+								UE_LOG(LogTemp, Warning, TEXT("Invalid vertex count: %d (max: %d)"), VertexCount, MaxVertices);
+								delete TriangleCounterReadback;
+								delete TriangleReadback;
+								delete VertexCounterReadback;
+								delete VertexReadback;
+								return;
+							}
+
 							// 读取顶点
 							TArray<FVector> Vertices;
 							Vertices.SetNum(VertexCount);
-							LockedData = nullptr;
 							LockedData = VertexReadback->Lock(sizeof(FVector3f) * VertexCount);
 							if (LockedData)
 							{
-								// 将void*转换为FVector3f*指针
 								FVector3f* VertexData = static_cast<FVector3f*>(LockedData);
-
 								for (int32 i = 0; i < VertexCount; i++)
 								{
-									// 直接通过指针索引访问，不再需要手动计算字节偏移
-									Vertices[i] = FVector(VertexData[i]); // 如果需要转换为FVector
+									Vertices[i] = FVector(VertexData[i]);
 								}
+							}
+							else
+							{
+								UE_LOG(LogTemp, Warning, TEXT("Failed to lock vertex buffer"));
+								VertexReadback->Unlock();
+								delete TriangleCounterReadback;
+								delete TriangleReadback;
+								delete VertexCounterReadback;
+								delete VertexReadback;
+								return;
 							}
 							VertexReadback->Unlock();
 
 							// 读取三角形数量
 							int32 TriangleCount = 0;
-							LockedData = nullptr;
 							LockedData = TriangleCounterReadback->Lock(sizeof(int32));
 							if (LockedData)
 							{
@@ -398,10 +412,20 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 							}
 							TriangleCounterReadback->Unlock();
 
+							// 验证三角形数量
+							if (TriangleCount <= 0 || TriangleCount > MaxTriangles)
+							{
+								UE_LOG(LogTemp, Warning, TEXT("Invalid triangle count: %d (max: %d)"), TriangleCount, MaxTriangles);
+								delete TriangleCounterReadback;
+								delete TriangleReadback;
+								delete VertexCounterReadback;
+								delete VertexReadback;
+								return;
+							}
+
 							// 读取三角形数据
 							TArray<FIntVector> Triangles;
 							Triangles.SetNum(TriangleCount);
-							LockedData = nullptr;
 							LockedData = TriangleReadback->Lock(sizeof(FIntVector) * TriangleCount);
 							if (LockedData)
 							{
@@ -411,17 +435,34 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 									Triangles[i] = TriangleData[i];
 								}
 							}
+							else
+							{
+								UE_LOG(LogTemp, Warning, TEXT("Failed to lock triangle buffer"));
+								TriangleReadback->Unlock();
+								delete TriangleCounterReadback;
+								delete TriangleReadback;
+								delete VertexCounterReadback;
+								delete VertexReadback;
+								return;
+							}
+							TriangleReadback->Unlock();
 
-							// 数据计算完成，发送到游戏线程设置模型
-							AsyncTask(ENamedThreads::GameThread, [AsyncCallback, TriangleArray = MoveTemp(Triangles), VerticesArray = MoveTemp(Vertices)]()mutable {
-								AsyncCallback(MoveTemp(VerticesArray), MoveTemp(TriangleArray));
+							UE_LOG(LogTemp, Log, TEXT("MC Result: %d vertices, %d triangles"), VertexCount, TriangleCount);
+
+							// CPU顶点焊接
+							TArray<FVector> WeldedVertices;
+							TArray<FIntVector> WeldedTriangles;
+							FGPUMarchingCubes::WeldVertices(Vertices, Triangles, WeldedVertices, WeldedTriangles, 0.01f);
+
+							// 发送到游戏线程
+							AsyncTask(ENamedThreads::GameThread, [AsyncCallback, WeldedTriangles = MoveTemp(WeldedTriangles), WeldedVertices = MoveTemp(WeldedVertices)]() mutable {
+								AsyncCallback(MoveTemp(WeldedVertices), MoveTemp(WeldedTriangles));
 								});
 
 							delete TriangleCounterReadback;
 							delete TriangleReadback;
 							delete VertexCounterReadback;
 							delete VertexReadback;
-
 						}
 						else
 						{
@@ -434,8 +475,6 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 				AsyncTask(ENamedThreads::ActualRenderingThread, [RunnerFunc]() {
 					RunnerFunc(RunnerFunc);
 					});
-
-
 			}
 
 			GraphBuilder.Execute();
